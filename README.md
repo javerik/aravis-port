@@ -43,6 +43,21 @@ No `unsafe` appears anywhere in the workspace (`#![forbid(unsafe_code)]` in ever
 | `aravis-port` | Umbrella crate — `discover()`, `Camera`, the public API |
 | `aravis-port-fakecamera` | In-process GVCP/GVSP simulator used by the test suite |
 
+## Publishing
+
+Every crate has `description`, `license`, `repository`, `readme`, `keywords`, and `categories` set (inherited from `[workspace.package]`), and every internal path dependency in `[workspace.dependencies]` carries a `version` alongside its `path` — required for `cargo publish` to resolve it once the dependency is live on crates.io. Workspace-internal *dev*-dependencies (e.g. `aravis-port-device` and `aravis-port-stream` depend on each other only as test fixtures) are deliberately left path-only with no version, so Cargo drops them from the published manifest instead of deadlocking a would-be publish cycle.
+
+Because of the real (non-dev) dependency graph, crates must be published to crates.io in this order:
+
+1. `aravis-port-core`
+2. `aravis-port-memory`, `aravis-port-genicam`, `aravis-port-net` (any order — each depends only on `core`)
+3. `aravis-port-stream` (depends on `core`, `memory`)
+4. `aravis-port-fakecamera` (depends on `core`, `genicam`, `memory`)
+5. `aravis-port-device` (depends on `core`, `net`, `genicam`, `memory`)
+6. `aravis-port` (depends on all of the above)
+
+For each, after the previous step's crate is confirmed live on crates.io: `cargo publish -p <crate>` (add `--dry-run` to check packaging without uploading — note a dry-run of any crate with an unpublished internal dependency will fail at the packaging step with "no matching package found," since it resolves the full graph against the live registry; this isn't a configuration problem, just the ordering constraint above).
+
 ## Live-hardware checks
 
 Each of `aravis-port-net`, `aravis-port-device`, and `aravis-port` has a `live_check_*` example under its `examples/` directory, used during development to validate against a real camera on the network (not part of `cargo test`, since CI has no camera attached). Run with `cargo run -p <crate> --example <name> -- <args>`; see each file for its expected arguments.

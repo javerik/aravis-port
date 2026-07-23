@@ -4,6 +4,9 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
 description = "Protocol types, GVCP/GVSP packet structs, and error types for aravis-port"
 
 [dependencies]

@@ -4,6 +4,9 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
 description = "GVCP device client, feature bridge, and heartbeat for aravis-port"
 
 [dependencies]
@@ -15,6 +18,11 @@ log.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
-aravis-port-fakecamera.workspace = true
-aravis-port-stream.workspace = true
+# Path-only (no version): these are workspace-internal test fixtures, and aravis-port-stream's
+# own dev-dependencies include this crate, so a versioned dependency here would deadlock
+# publishing (each side would need the other already on crates.io first). Cargo drops path-only
+# dev-dependencies from the published manifest, which is fine — published consumers never build
+# this crate's own test/example targets.
+aravis-port-fakecamera = { path = "../aravis-port-fakecamera" }
+aravis-port-stream = { path = "../aravis-port-stream" }
 env_logger.workspace = true

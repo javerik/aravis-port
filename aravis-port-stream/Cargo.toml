@@ -4,6 +4,9 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
 description = "GVSP receiver, packet reassembly, and resend logic for aravis-port"
 
 [dependencies]
@@ -12,5 +15,8 @@ aravis-port-memory.workspace = true
 log.workspace = true
 
 [dev-dependencies]
-aravis-port-fakecamera.workspace = true
-aravis-port-device.workspace = true
+# Path-only (no version): see the matching comment in aravis-port-device/Cargo.toml — this and
+# aravis-port-device depend on each other as dev-dependencies only, which would deadlock
+# publishing if versioned.
+aravis-port-fakecamera = { path = "../aravis-port-fakecamera" }
+aravis-port-device = { path = "../aravis-port-device" }

@@ -15,16 +15,19 @@ members = [
 version = "0.1.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/aravis-project/aravis-port"
+repository = "https://github.com/javerik/aravis-port"
+readme = "README.md"
+keywords = ["gigevision", "genicam", "machine-vision", "camera"]
+categories = ["hardware-support", "network-programming", "computer-vision"]
 
 [workspace.dependencies]
-aravis-port-core = { path = "aravis-port-core" }
-aravis-port-net = { path = "aravis-port-net" }
-aravis-port-genicam = { path = "aravis-port-genicam" }
-aravis-port-memory = { path = "aravis-port-memory" }
-aravis-port-device = { path = "aravis-port-device" }
-aravis-port-stream = { path = "aravis-port-stream" }
-aravis-port-fakecamera = { path = "aravis-port-fakecamera" }
+aravis-port-core = { path = "aravis-port-core", version = "0.1.0" }
+aravis-port-net = { path = "aravis-port-net", version = "0.1.0" }
+aravis-port-genicam = { path = "aravis-port-genicam", version = "0.1.0" }
+aravis-port-memory = { path = "aravis-port-memory", version = "0.1.0" }
+aravis-port-device = { path = "aravis-port-device", version = "0.1.0" }
+aravis-port-stream = { path = "aravis-port-stream", version = "0.1.0" }
+aravis-port-fakecamera = { path = "aravis-port-fakecamera", version = "0.1.0" }
 quick-xml = "0.36"
 thiserror = "1.0"
 log = "0.4"

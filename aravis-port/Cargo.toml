@@ -4,6 +4,9 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
 description = "Pure-Rust GigE Vision (GEV) camera control and streaming"
 
 [dependencies]
@@ -15,5 +18,8 @@ aravis-port-device.workspace = true
 aravis-port-stream.workspace = true
 
 [dev-dependencies]
-aravis-port-fakecamera.workspace = true
+# Path-only (no version): a workspace-internal test fixture only, not needed by consumers of the
+# published crate. See the matching comment in aravis-port-device/Cargo.toml for why this pattern
+# is used consistently for these test-only cross-crate dependencies.
+aravis-port-fakecamera = { path = "../aravis-port-fakecamera" }
 env_logger.workspace = true
