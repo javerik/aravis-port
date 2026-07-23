@@ -1,0 +1,14 @@
+[package]
+name = "aravis-port-fakecamera"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "In-process GVCP/GVSP simulator used for aravis-port CI tests"
+
+[dependencies]
+aravis-port-core.workspace = true
+aravis-port-genicam.workspace = true
+aravis-port-memory.workspace = true
+rand.workspace = true
+log.workspace = true

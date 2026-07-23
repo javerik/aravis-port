@@ -1,0 +1,20 @@
+[package]
+name = "aravis-port-device"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "GVCP device client, feature bridge, and heartbeat for aravis-port"
+
+[dependencies]
+aravis-port-core.workspace = true
+aravis-port-net.workspace = true
+aravis-port-genicam.workspace = true
+aravis-port-memory.workspace = true
+log.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+aravis-port-fakecamera.workspace = true
+aravis-port-stream.workspace = true
+env_logger.workspace = true

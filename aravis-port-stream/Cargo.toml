@@ -1,0 +1,16 @@
+[package]
+name = "aravis-port-stream"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "GVSP receiver, packet reassembly, and resend logic for aravis-port"
+
+[dependencies]
+aravis-port-core.workspace = true
+aravis-port-memory.workspace = true
+log.workspace = true
+
+[dev-dependencies]
+aravis-port-fakecamera.workspace = true
+aravis-port-device.workspace = true

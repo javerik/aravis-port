@@ -1,0 +1,11 @@
+[package]
+name = "aravis-port-memory"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Buffer, buffer pool, and chunk-data TLV index for aravis-port"
+
+[dependencies]
+aravis-port-core.workspace = true
+thiserror.workspace = true
