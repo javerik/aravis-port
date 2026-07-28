@@ -37,6 +37,7 @@ pub use aravis_port_stream as stream;
 
 pub use aravis_port_core::{Error, Result};
 pub use aravis_port_net::DiscoveredDevice;
+pub use aravis_port_stream::StreamConfig;
 
 pub use camera::{Camera, StreamHandle};
 
@@ -53,6 +54,6 @@ pub fn discover(timeout: Duration) -> Result<Vec<DiscoveredDevice>> {
 
 /// Re-exports covering the common case: `use aravis_port::prelude::*;`.
 pub mod prelude {
-    pub use crate::{discover, Camera, Error, Result, StreamHandle};
+    pub use crate::{discover, Camera, Error, Result, StreamConfig, StreamHandle};
     pub use aravis_port_memory::Buffer;
 }

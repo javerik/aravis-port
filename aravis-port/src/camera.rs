@@ -91,25 +91,23 @@ impl Camera {
     }
 
     /// Set up a GVSP stream channel and buffer pool; returns the low-level pool handle plus the
-    /// running receiver. Shared by [`Camera::start_stream`] (simple callback API) and
-    /// [`Camera::start_stream_channel`] (advanced, zero-copy API).
-    fn open_stream(&self) -> Result<(BufferPoolHandle, aravis_port_stream::StreamHandle)> {
+    /// running receiver. Shared by every `start_stream*` variant. `cfg.packet_size` is written
+    /// to the device (`GevSCPSPacketSize`) before acquiring, so the two always stay in sync —
+    /// setting the packet size any other way (e.g. `camera.write("GevSCPSPacketSize", ...)`)
+    /// before calling a `start_stream*` method has no effect, since this overwrites it.
+    fn open_stream(&self, cfg: StreamConfig) -> Result<(BufferPoolHandle, aravis_port_stream::StreamHandle)> {
         let payload_size: i64 = self.device.read("PayloadSize")?;
         let local_ip = Self::local_route_to(self.ip)?;
         let socket = UdpSocket::bind((local_ip, 0)).map_err(Error::Io)?;
         let local_port = socket.local_addr().map_err(Error::Io)?.port();
 
         self.device.open_stream_channel(local_ip, local_port)?;
-        self.device.set_stream_packet_size(DEFAULT_STREAM_PACKET_SIZE)?;
+        self.device.set_stream_packet_size(cfg.packet_size)?;
 
         let (pool_user, pool_stream) = new_buffer_pool(4, payload_size.max(0) as usize);
         let requester = Box::new(DeviceResendRequester {
             sender: self.device.resend_sender(),
         });
-        let cfg = StreamConfig {
-            packet_size: DEFAULT_STREAM_PACKET_SIZE,
-            ..StreamConfig::default()
-        };
         let stream_handle = aravis_port_stream::spawn(socket, cfg, pool_stream, requester, None).map_err(Error::Io)?;
 
         // Best-effort: most GEV cameras expose a standard "AcquisitionStart" command, and the
@@ -121,11 +119,28 @@ impl Camera {
         Ok((pool_user, stream_handle))
     }
 
+    fn default_stream_config() -> StreamConfig {
+        StreamConfig {
+            packet_size: DEFAULT_STREAM_PACKET_SIZE,
+            ..StreamConfig::default()
+        }
+    }
+
     /// Start streaming, invoking `callback` with a clone of each completed frame (the original
-    /// buffer is recycled automatically). For zero-copy access to buffers, use
-    /// [`Camera::start_stream_channel`] instead.
-    pub fn start_stream(&self, mut callback: impl FnMut(Buffer) + Send + 'static) -> Result<StreamHandle> {
-        let (pool_user, stream_handle) = self.open_stream()?;
+    /// buffer is recycled automatically), using a safely-under-MTU default packet size and the
+    /// default resend/timeout tuning. For zero-copy access to buffers, use
+    /// [`Camera::start_stream_channel`]; to control the packet size or resend/timeout behavior,
+    /// use [`Camera::start_stream_with_config`].
+    pub fn start_stream(&self, callback: impl FnMut(Buffer) + Send + 'static) -> Result<StreamHandle> {
+        self.start_stream_with_config(Self::default_stream_config(), callback)
+    }
+
+    /// Like [`Camera::start_stream`], but with caller-supplied [`StreamConfig`] — most commonly
+    /// to set a non-default `packet_size` (e.g. jumbo frames on a high-MTU network), but also to
+    /// tune resend/timeout behavior. `cfg.packet_size` is written to the device as
+    /// `GevSCPSPacketSize` before acquiring.
+    pub fn start_stream_with_config(&self, cfg: StreamConfig, mut callback: impl FnMut(Buffer) + Send + 'static) -> Result<StreamHandle> {
+        let (pool_user, stream_handle) = self.open_stream(cfg)?;
         let (stop_tx, stop_rx) = mpsc::channel();
         let join = thread::spawn(move || loop {
             if stop_rx.try_recv().is_ok() {
@@ -144,9 +159,17 @@ impl Camera {
     }
 
     /// Start streaming with direct access to the buffer pool: pop completed buffers from the
-    /// returned [`BufferPoolHandle`] and push them back once done, for zero-copy reuse.
+    /// returned [`BufferPoolHandle`] and push them back once done, for zero-copy reuse. Uses the
+    /// same default packet size as [`Camera::start_stream`]; see
+    /// [`Camera::start_stream_channel_with_config`] to override it.
     pub fn start_stream_channel(&self) -> Result<(StreamHandle, BufferPoolHandle)> {
-        let (pool_user, stream_handle) = self.open_stream()?;
+        self.start_stream_channel_with_config(Self::default_stream_config())
+    }
+
+    /// Like [`Camera::start_stream_channel`], but with caller-supplied [`StreamConfig`] — see
+    /// [`Camera::start_stream_with_config`].
+    pub fn start_stream_channel_with_config(&self, cfg: StreamConfig) -> Result<(StreamHandle, BufferPoolHandle)> {
+        let (pool_user, stream_handle) = self.open_stream(cfg)?;
         Ok((
             StreamHandle {
                 _stream: stream_handle,
@@ -157,7 +180,7 @@ impl Camera {
         ))
     }
 
-    /// Stop a stream started by [`Camera::start_stream`] or [`Camera::start_stream_channel`].
+    /// Stop a stream started by any `start_stream*` method.
     pub fn stop_stream(&self, handle: StreamHandle) -> Result<()> {
         drop(handle);
         let _ = self.device.execute_command("AcquisitionStop");
@@ -165,8 +188,9 @@ impl Camera {
     }
 }
 
-/// Handle to a running stream; dropping it (or calling [`StreamHandle::stop`]) stops the
-/// receiver thread (and, for [`Camera::start_stream`], the delivery thread).
+/// Handle to a running stream; dropping it (or passing it to [`Camera::stop_stream`]) stops the
+/// receiver thread (and, for [`Camera::start_stream`]/[`Camera::start_stream_with_config`], the
+/// delivery thread).
 pub struct StreamHandle {
     _stream: aravis_port_stream::StreamHandle,
     delivery_stop: Option<mpsc::Sender<()>>,
