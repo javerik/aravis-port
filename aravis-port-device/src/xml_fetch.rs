@@ -1,7 +1,7 @@
 use aravis_port_core::bootstrap::offset;
 use aravis_port_core::{Error, Result};
-use aravis_port_net::GvcpTransaction;
 
+use crate::net::GvcpTransaction;
 use crate::zip;
 
 /// Fetch the GenICam XML document, trying `XML_URL_0` then `XML_URL_1`, per the standard

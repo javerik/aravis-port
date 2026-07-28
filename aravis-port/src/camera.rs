@@ -4,10 +4,10 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 use aravis_port_core::gvcp::PacketResend;
+use aravis_port_core::memory::{new_buffer_pool, Buffer, BufferPoolHandle};
 use aravis_port_core::{Error, Result};
+use aravis_port_device::net::DiscoveredDevice;
 use aravis_port_device::{Device, DeviceConfig, FeatureValue, PacketResendSender};
-use aravis_port_memory::{new_buffer_pool, Buffer, BufferPoolHandle};
-use aravis_port_net::DiscoveredDevice;
 use aravis_port_stream::{ResendRequester, StreamConfig};
 
 /// A safely-under-standard-MTU default GVSP packet size — a device's power-on default can
@@ -76,6 +76,19 @@ impl Camera {
     /// `false` once the heartbeat thread has observed lost control-channel privilege.
     pub fn has_control(&self) -> bool {
         self.device.has_control()
+    }
+
+    /// Direct access to the underlying `Device` — for raw register/memory I/O
+    /// (`read_register`/`write_register`/`read_memory`/`write_memory`) and other lower-level
+    /// operations `Camera` doesn't wrap directly.
+    pub fn device(&self) -> &Device {
+        &self.device
+    }
+
+    /// Mutable access to the underlying `Device` — needed for `stop_heartbeat`/`shutdown`, which
+    /// take `&mut self` on `Device` (e.g. to simulate an ungraceful disconnect in tests).
+    pub fn device_mut(&mut self) -> &mut Device {
+        &mut self.device
     }
 
     /// Figure out which local IP address the OS would route through to reach `peer`, without

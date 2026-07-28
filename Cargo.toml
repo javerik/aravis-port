@@ -2,9 +2,7 @@
 resolver = "2"
 members = [
     "aravis-port-core",
-    "aravis-port-net",
     "aravis-port-genicam",
-    "aravis-port-memory",
     "aravis-port-device",
     "aravis-port-stream",
     "aravis-port",
@@ -22,9 +20,7 @@ categories = ["hardware-support", "network-programming", "computer-vision"]
 
 [workspace.dependencies]
 aravis-port-core = { path = "aravis-port-core", version = "0.1.0" }
-aravis-port-net = { path = "aravis-port-net", version = "0.1.0" }
 aravis-port-genicam = { path = "aravis-port-genicam", version = "0.1.0" }
-aravis-port-memory = { path = "aravis-port-memory", version = "0.1.0" }
 aravis-port-device = { path = "aravis-port-device", version = "0.1.0" }
 aravis-port-stream = { path = "aravis-port-stream", version = "0.1.0" }
 aravis-port-fakecamera = { path = "aravis-port-fakecamera", version = "0.1.0" }

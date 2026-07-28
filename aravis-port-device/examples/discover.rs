@@ -1,9 +1,9 @@
-//! Manual discovery smoke test: `cargo run -p aravis-port-net --example discover -- 169.254.1.1 169.254.255.255`
+//! Manual discovery smoke test: `cargo run -p aravis-port-device --example discover -- 169.254.1.1 169.254.255.255`
 
 use std::net::Ipv4Addr;
 use std::time::Duration;
 
-use aravis_port_net::{discover, DiscoveryOptions};
+use aravis_port_device::net::{discover, DiscoveryOptions};
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();

@@ -34,14 +34,14 @@ No `unsafe` appears anywhere in the workspace (`#![forbid(unsafe_code)]` in ever
 
 | Crate | Responsibility |
 |---|---|
-| `aravis-port-core` | GVCP/GVSP packet structs, GVBS bootstrap register offsets, `MacAddress`, shared `Error` |
-| `aravis-port-net` | UDP discovery, GVCP request/response transaction state machine |
+| `aravis-port-core` | GVCP/GVSP packet structs, GVBS bootstrap register offsets, `MacAddress`, shared `Error`; `core::memory`: `Buffer`, buffer pool, chunk-data TLV index |
 | `aravis-port-genicam` | XML → node-tree engine, formula evaluator, register access trait |
-| `aravis-port-memory` | `Buffer`, buffer pool, chunk-data TLV index |
-| `aravis-port-device` | GVCP device client, GenICam feature bridge, heartbeat, XML fetch (incl. unzip) |
+| `aravis-port-device` | GVCP device client, GenICam feature bridge, heartbeat, XML fetch (incl. unzip); `device::net`: UDP discovery, GVCP request/response transaction state machine |
 | `aravis-port-stream` | GVSP receiver thread, packet reassembly/resend |
 | `aravis-port` | Umbrella crate — `discover()`, `Camera`, the public API |
 | `aravis-port-fakecamera` | In-process GVCP/GVSP simulator used by the test suite |
+
+`aravis-port-memory` and `aravis-port-net` were folded into `core`/`device` respectively — each existed only because of the original 8-crate spec, not for any load-bearing architectural reason. The umbrella crate still exposes `aravis_port::memory::*` and `aravis_port::net::*` unchanged.
 
 ## Publishing
 
@@ -50,20 +50,20 @@ Every crate has `description`, `license`, `repository`, `readme`, `keywords`, an
 Because of the real (non-dev) dependency graph, crates must be published to crates.io in this order:
 
 1. `aravis-port-core`
-2. `aravis-port-memory`, `aravis-port-genicam`, `aravis-port-net` (any order — each depends only on `core`)
-3. `aravis-port-stream` (depends on `core`, `memory`)
-4. `aravis-port-fakecamera` (depends on `core`, `genicam`, `memory`)
-5. `aravis-port-device` (depends on `core`, `net`, `genicam`, `memory`)
+2. `aravis-port-genicam` (depends only on `core`)
+3. `aravis-port-stream` (depends on `core`)
+4. `aravis-port-fakecamera` (depends on `core`, `genicam`)
+5. `aravis-port-device` (depends on `core`, `genicam`)
 6. `aravis-port` (depends on all of the above)
 
 For each, after the previous step's crate is confirmed live on crates.io: `cargo publish -p <crate>` (add `--dry-run` to check packaging without uploading — note a dry-run of any crate with an unpublished internal dependency will fail at the packaging step with "no matching package found," since it resolves the full graph against the live registry; this isn't a configuration problem, just the ordering constraint above).
 
 ## Live-hardware checks
 
-Each of `aravis-port-net`, `aravis-port-device`, and `aravis-port` has a `live_check_*` example under its `examples/` directory, used during development to validate against a real camera on the network (not part of `cargo test`, since CI has no camera attached). Run with `cargo run -p <crate> --example <name> -- <args>`; see each file for its expected arguments.
+Each of `aravis-port-device` and `aravis-port` has a `live_check_*` example under its `examples/` directory, used during development to validate against a real camera on the network (not part of `cargo test`, since CI has no camera attached). Run with `cargo run -p <crate> --example <name> -- <args>`; see each file for its expected arguments.
 
 ## Known limitations
 
 - **No local network interface enumeration.** `std` has no safe API for this, so [`aravis_port::net::discover`] requires an explicit bind address/directed-broadcast pair rather than scanning every NIC automatically.
-- **No `SO_RCVBUF` control.** See the note in `aravis-port-net`'s crate docs — an OS-level `sysctl` tuning concern at very high frame rates, not something this crate can address without an additional dependency.
+- **No `SO_RCVBUF` control.** See the note in `aravis-port-device::net`'s module docs — an OS-level `sysctl` tuning concern at very high frame rates, not something this crate can address without an additional dependency.
 - **GenICam node coverage** targets the practical subset real GEV cameras use (validated against the two devices above): `Category`, `Integer`, `Float`, `Boolean`, `Enumeration`, `Command`, `StringReg`, `IntReg`/`MaskedIntReg`, `FloatReg`, `Converter`, `SwissKnife`. Less common node kinds (`StructEntry`, `IndexNode`, `Selector` as a first-class interface) are not modeled; `Port`/generic `Register` elements resolve as inert placeholders so a document referencing them still parses.

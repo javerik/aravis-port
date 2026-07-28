@@ -6,11 +6,11 @@ use std::time::Duration;
 use aravis_port_core::bootstrap::{control_channel_privilege, offset};
 use aravis_port_core::{Error, Result};
 use aravis_port_genicam::GenApiTree;
-use aravis_port_net::{GvcpTransaction, TransactionConfig};
 
 use crate::feature::FeatureValue;
 use crate::heartbeat::HeartbeatHandle;
 use crate::io::GvcpTransactionIo;
+use crate::net::{GvcpTransaction, TransactionConfig};
 use crate::xml_fetch;
 
 /// Configuration for [`Device::connect`].

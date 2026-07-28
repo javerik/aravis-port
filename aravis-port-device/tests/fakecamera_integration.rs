@@ -4,7 +4,7 @@ use aravis_port_core::bootstrap::offset;
 use aravis_port_core::Error;
 use aravis_port_device::{Device, DeviceConfig};
 use aravis_port_fakecamera::{feature, FakeCamera, FakeCameraConfig};
-use aravis_port_net::{GvcpTransaction, TransactionConfig};
+use aravis_port_device::net::{GvcpTransaction, TransactionConfig};
 
 fn fast_device_config() -> DeviceConfig {
     DeviceConfig {

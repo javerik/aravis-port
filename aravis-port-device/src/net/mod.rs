@@ -1,4 +1,3 @@
-#![forbid(unsafe_code)]
 //! UDP-based discovery and GVCP request/response handling.
 //!
 //! `std::net::UdpSocket` has no safe way to enumerate local network interfaces, so unlike

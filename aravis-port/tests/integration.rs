@@ -5,11 +5,11 @@
 use std::net::{Ipv4Addr, UdpSocket};
 use std::time::Duration;
 
+use aravis_port::core::gvcp::{Command, DiscoveryAck, GvcpHeader, GvcpPayload, PacketType, HEADER_LEN};
+use aravis_port::memory::{BufferStatus, ChunkTlvIndex};
 use aravis_port::prelude::*;
-use aravis_port_core::gvcp::{Command, DiscoveryAck, GvcpHeader, GvcpPayload, PacketType, HEADER_LEN};
-use aravis_port_device::{Device, DeviceConfig};
+use aravis_port::{Device, DeviceConfig};
 use aravis_port_fakecamera::{feature, FakeCamera, FakeCameraConfig};
-use aravis_port_memory::{BufferStatus, ChunkTlvIndex};
 
 fn fake_camera(cfg: FakeCameraConfig) -> FakeCamera {
     FakeCamera::start(cfg).expect("failed to start fake camera")
@@ -116,7 +116,7 @@ fn camera_start_stream_with_config_uses_the_given_packet_size() {
 
     assert_eq!(buf.status, BufferStatus::Success);
     assert_eq!(buf.data().len(), 16 * 16);
-    let packet_size_reg = camera.peek_register(aravis_port_core::bootstrap::offset::STREAM_CHANNEL_0_PACKET_SIZE) & 0xffff;
+    let packet_size_reg = camera.peek_register(aravis_port::core::bootstrap::offset::STREAM_CHANNEL_0_PACKET_SIZE) & 0xffff;
     assert_eq!(packet_size_reg, 900, "device's GevSCPSPacketSize should reflect the custom config, not the 1400 default");
 }
 

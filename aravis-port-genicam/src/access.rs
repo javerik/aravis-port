@@ -1,5 +1,5 @@
 /// The transport boundary between the GenICam engine and whatever moves bytes on/off the wire.
-/// Keeping this trait tiny (and this crate free of any dependency on `aravis-port-net`) is what
+/// Keeping this trait tiny (and this crate free of any dependency on `aravis-port-device`/networking) is what
 /// lets the node tree, formula evaluator, and caching logic be tested with a plain `Vec<u8>`
 /// stand-in instead of real sockets.
 pub trait RegisterAccess {

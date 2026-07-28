@@ -1,6 +1,6 @@
 use std::sync::mpsc;
 
-use crate::buffer::Buffer;
+use super::buffer::Buffer;
 
 /// The user-facing half of a buffer pool: push empty (or reused) buffers in, pop completed ones
 /// out. Mirrors Aravis's two-`GAsyncQueue` model without needing a literal ring buffer.

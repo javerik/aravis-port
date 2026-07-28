@@ -31,22 +31,25 @@ use std::time::Duration;
 pub use aravis_port_core as core;
 pub use aravis_port_device as device;
 pub use aravis_port_genicam as genicam;
-pub use aravis_port_memory as memory;
-pub use aravis_port_net as net;
 pub use aravis_port_stream as stream;
 
+pub use aravis_port_core::memory;
+pub use aravis_port_device::net;
+
 pub use aravis_port_core::{Error, Result};
-pub use aravis_port_net::DiscoveredDevice;
+pub use aravis_port_core::memory::{new_buffer_pool, BufferPoolHandle, BufferPoolStreamSide};
+pub use aravis_port_device::net::DiscoveredDevice;
+pub use aravis_port_device::{Device, DeviceConfig, FeatureValue};
 pub use aravis_port_stream::StreamConfig;
 
 pub use camera::{Camera, StreamHandle};
 
 /// Discover cameras on the network within `timeout`. Blocks for the full duration of the
-/// broadcast round. See [`aravis_port_net::DiscoveryOptions`] for interface-selection control
-/// beyond the default (`0.0.0.0`, i.e. the OS default route) — `std` has no safe API to
+/// broadcast round. See [`aravis_port_device::net::DiscoveryOptions`] for interface-selection
+/// control beyond the default (`0.0.0.0`, i.e. the OS default route) — `std` has no safe API to
 /// enumerate local network interfaces automatically.
 pub fn discover(timeout: Duration) -> Result<Vec<DiscoveredDevice>> {
-    aravis_port_net::discover(&aravis_port_net::DiscoveryOptions {
+    aravis_port_device::net::discover(&aravis_port_device::net::DiscoveryOptions {
         timeout,
         ..Default::default()
     })
@@ -55,5 +58,5 @@ pub fn discover(timeout: Duration) -> Result<Vec<DiscoveredDevice>> {
 /// Re-exports covering the common case: `use aravis_port::prelude::*;`.
 pub mod prelude {
     pub use crate::{discover, Camera, Error, Result, StreamConfig, StreamHandle};
-    pub use aravis_port_memory::Buffer;
+    pub use crate::memory::{Buffer, BufferStatus};
 }

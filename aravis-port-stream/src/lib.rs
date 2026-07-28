@@ -1,7 +1,7 @@
 #![forbid(unsafe_code)]
 //! GVSP receiver thread, packet reassembly, and resend logic.
 //!
-//! Deliberately has no dependency on `aravis-port-net`: receiving GVSP only needs a raw
+//! Deliberately has no dependency on `aravis-port-device`/its `net` module: receiving GVSP only needs a raw
 //! [`std::net::UdpSocket`]; the only outbound traffic (`PACKET_RESEND_CMD`) goes out through the
 //! small [`ResendRequester`] trait, which the umbrella crate wires to the device's GVCP
 //! transaction.

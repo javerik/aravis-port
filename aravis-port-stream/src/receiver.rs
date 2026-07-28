@@ -4,7 +4,7 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use aravis_port_core::gvsp::GvspHeader;
-use aravis_port_memory::{Buffer, BufferPoolStreamSide};
+use aravis_port_core::memory::{Buffer, BufferPoolStreamSide};
 
 use crate::config::StreamConfig;
 use crate::reassembly::Reassembler;

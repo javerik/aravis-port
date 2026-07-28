@@ -3,7 +3,7 @@ use std::time::Instant;
 
 use aravis_port_core::gvcp::PacketResend;
 use aravis_port_core::gvsp::{ContentType, GvspHeader, GvspStatus, LeaderPayload};
-use aravis_port_memory::{Buffer, BufferStatus, BufferPoolStreamSide, PayloadType};
+use aravis_port_core::memory::{Buffer, BufferStatus, BufferPoolStreamSide, PayloadType};
 
 use crate::config::StreamConfig;
 use crate::ResendRequester;
@@ -107,7 +107,7 @@ impl FrameAssembly {
                     };
                     self.buffer.timestamp_ns = leader.timestamp;
                     if let Some(img) = leader.image {
-                        self.buffer.image = Some(aravis_port_memory::ImageInfo {
+                        self.buffer.image = Some(aravis_port_core::memory::ImageInfo {
                             pixel_format: img.pixel_format,
                             width: img.width,
                             height: img.height,
@@ -311,7 +311,7 @@ impl Reassembler {
 mod tests {
     use super::*;
     use aravis_port_core::gvsp::{ContentType, GvspHeader, GvspStatus, ImageInfos, PayloadKind};
-    use aravis_port_memory::new_buffer_pool;
+    use aravis_port_core::memory::new_buffer_pool;
 
     struct MockRequester {
         requests: Vec<PacketResend>,
@@ -380,7 +380,7 @@ mod tests {
         let closed = reassembler.process_packet(GvspStatus::Success, header(1, ContentType::Payload, 1), &payload1, &stream, &mut requester, now);
 
         assert_eq!(closed.len(), 1);
-        assert_eq!(closed[0].status, aravis_port_memory::BufferStatus::Success);
+        assert_eq!(closed[0].status, aravis_port_core::memory::BufferStatus::Success);
         assert_eq!(closed[0].data(), b"AAAABBBB");
         assert_eq!(closed[0].image.unwrap().width, 4);
     }
@@ -453,7 +453,7 @@ mod tests {
 
         let closed = reassembler.tick(&mut requester, now + std::time::Duration::from_millis(20));
         assert_eq!(closed.len(), 1);
-        assert_eq!(closed[0].status, aravis_port_memory::BufferStatus::Timeout);
+        assert_eq!(closed[0].status, aravis_port_core::memory::BufferStatus::Timeout);
     }
 
     #[test]
@@ -473,6 +473,6 @@ mod tests {
 
         let closed = reassembler.tick(&mut requester, now + std::time::Duration::from_millis(20));
         assert_eq!(closed.len(), 1);
-        assert_eq!(closed[0].status, aravis_port_memory::BufferStatus::MissingPackets);
+        assert_eq!(closed[0].status, aravis_port_core::memory::BufferStatus::MissingPackets);
     }
 }

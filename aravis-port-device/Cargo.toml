@@ -11,9 +11,7 @@ description = "GVCP device client, feature bridge, and heartbeat for aravis-port
 
 [dependencies]
 aravis-port-core.workspace = true
-aravis-port-net.workspace = true
 aravis-port-genicam.workspace = true
-aravis-port-memory.workspace = true
 log.workspace = true
 thiserror.workspace = true
 

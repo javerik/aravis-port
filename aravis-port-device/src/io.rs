@@ -2,7 +2,8 @@ use std::io;
 use std::sync::{Arc, Mutex};
 
 use aravis_port_genicam::RegisterAccess;
-use aravis_port_net::GvcpTransaction;
+
+use crate::net::GvcpTransaction;
 
 /// Bridges `aravis-port-genicam`'s transport-agnostic `RegisterAccess` trait to the shared,
 /// mutex-guarded GVCP transaction (shared with the heartbeat thread).

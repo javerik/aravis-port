@@ -6,7 +6,7 @@ use aravis_port_core::gvcp::{
     Command, GvcpHeader, GvcpPayload, PacketType, PendingAck, ReadRegisterAck,
 };
 use aravis_port_core::Error;
-use aravis_port_net::{GvcpTransaction, TransactionConfig};
+use aravis_port_device::net::{GvcpTransaction, TransactionConfig};
 
 /// Binds a loopback "fake device" socket and returns it plus its address.
 fn fake_device_socket() -> (UdpSocket, SocketAddrV4) {

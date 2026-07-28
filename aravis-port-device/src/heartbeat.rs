@@ -5,7 +5,8 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 use aravis_port_core::bootstrap::{control_channel_privilege, offset};
-use aravis_port_net::GvcpTransaction;
+
+use crate::net::GvcpTransaction;
 
 pub(crate) struct HeartbeatHandle {
     stop_tx: mpsc::Sender<()>,

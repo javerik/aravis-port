@@ -7,8 +7,8 @@ use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4, UdpSocket};
 use std::time::Duration;
 
 use aravis_port_core::gvcp::PacketResend;
+use aravis_port_core::memory::new_buffer_pool;
 use aravis_port_device::{Device, DeviceConfig};
-use aravis_port_memory::new_buffer_pool;
 use aravis_port_stream::{spawn, ResendRequester, StreamConfig};
 
 /// No resend support in this smoke test (a direct GigE link shouldn't drop packets over a few

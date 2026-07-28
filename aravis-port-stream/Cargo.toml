@@ -11,7 +11,6 @@ description = "GVSP receiver, packet reassembly, and resend logic for aravis-por
 
 [dependencies]
 aravis-port-core.workspace = true
-aravis-port-memory.workspace = true
 log.workspace = true
 
 [dev-dependencies]

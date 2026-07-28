@@ -11,9 +11,7 @@ description = "Pure-Rust GigE Vision (GEV) camera control and streaming"
 
 [dependencies]
 aravis-port-core.workspace = true
-aravis-port-net.workspace = true
 aravis-port-genicam.workspace = true
-aravis-port-memory.workspace = true
 aravis-port-device.workspace = true
 aravis-port-stream.workspace = true
 

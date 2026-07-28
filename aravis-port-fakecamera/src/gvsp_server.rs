@@ -17,7 +17,7 @@ const HAS_CHUNKS_BIT: u16 = 0x4000;
 
 /// Chunk id used for the single "FrameID" chunk this fake camera appends when chunk mode is
 /// active — a 4-byte big-endian copy of the frame id, matching the reverse-TLV layout
-/// `aravis_port_memory::ChunkTlvIndex` expects.
+/// `aravis_port_core::memory::ChunkTlvIndex` expects.
 pub const CHUNK_ID_FRAME_ID: u32 = 1;
 
 pub(crate) fn spawn(
@@ -92,7 +92,7 @@ fn send_gvsp(socket: &UdpSocket, dest: SocketAddrV4, frame_id: u64, content_type
 /// function of its arguments, so a resend request can regenerate any subset of a frame's packets
 /// on demand without the server needing to retain per-frame history. When `chunk_mode` is set, a
 /// single "FrameID" chunk (see [`CHUNK_ID_FRAME_ID`]) is appended after the image data, in the
-/// reverse-TLV layout `aravis_port_memory::ChunkTlvIndex` expects, and the leader's
+/// reverse-TLV layout `aravis_port_core::memory::ChunkTlvIndex` expects, and the leader's
 /// `has_chunks` bit is set.
 fn build_frame_packets(
     frame_id: u64,

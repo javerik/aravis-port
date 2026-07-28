@@ -4,7 +4,7 @@ use std::time::Duration;
 use aravis_port_core::bootstrap::offset;
 use aravis_port_core::gvcp::PacketResend;
 use aravis_port_fakecamera::{feature, FakeCamera, FakeCameraConfig};
-use aravis_port_memory::{new_buffer_pool, BufferStatus};
+use aravis_port_core::memory::{new_buffer_pool, BufferStatus};
 use aravis_port_stream::{spawn, ResendRequester, StreamConfig};
 
 struct NoopRequester;

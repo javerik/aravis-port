@@ -1,4 +1,3 @@
-#![forbid(unsafe_code)]
 //! Buffer types, buffer pool, and chunk-data TLV index.
 
 mod buffer;
