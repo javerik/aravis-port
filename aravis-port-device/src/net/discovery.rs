@@ -11,6 +11,8 @@ use aravis_port_core::{Error, MacAddress, Result};
 #[derive(Debug, Clone)]
 pub struct DiscoveryOptions {
     pub bind_addrs: Vec<(Ipv4Addr, Option<Ipv4Addr>)>,
+    /// How long to listen for acks, applied **per bind address**. A round over `n` bind
+    /// addresses therefore takes up to `n * timeout`; probe them concurrently if that matters.
     pub timeout: Duration,
 }
 
@@ -70,10 +72,11 @@ impl DiscoveredDevice {
 }
 
 /// Broadcast a `DISCOVERY_CMD` on every configured bind address and collect `DISCOVERY_ACK`
-/// responses (deduplicated by MAC address) until `opts.timeout` elapses.
+/// responses, deduplicated by MAC address. `opts.timeout` applies to each bind address
+/// separately, so every interface gets a full listening window rather than the first one
+/// consuming the whole budget.
 pub fn discover(opts: &DiscoveryOptions) -> Result<Vec<DiscoveredDevice>> {
     let mut found: HashMap<MacAddress, DiscoveredDevice> = HashMap::new();
-    let overall_deadline = Instant::now() + opts.timeout;
 
     let discovery_header = GvcpHeader {
         packet_type: PacketType::Cmd,
@@ -94,7 +97,8 @@ pub fn discover(opts: &DiscoveryOptions) -> Result<Vec<DiscoveredDevice>> {
             socket.send_to(&packet, (*dir, gvcp::PORT))?;
         }
 
-        while Instant::now() < overall_deadline {
+        let deadline = Instant::now() + opts.timeout;
+        while Instant::now() < deadline {
             let mut buf = [0u8; 1024];
             match socket.recv_from(&mut buf) {
                 Ok((n, _from)) => {
@@ -148,5 +152,37 @@ mod tests {
         let device = DiscoveredDevice::from_ack(&ack);
         assert!(device.id.contains("C5-2040-GigE"));
         assert!(device.id.contains("21312821"));
+    }
+
+    /// Each bind address must get its own full listening window. A single shared deadline would
+    /// let the first address consume the whole budget, leaving every later interface to fire its
+    /// probe and immediately give up — silently returning only the first NIC's cameras.
+    #[test]
+    fn timeout_applies_per_bind_address() {
+        let timeout = Duration::from_millis(150);
+        let one = DiscoveryOptions {
+            bind_addrs: vec![(Ipv4Addr::LOCALHOST, None)],
+            timeout,
+        };
+        let three = DiscoveryOptions {
+            bind_addrs: vec![(Ipv4Addr::LOCALHOST, None); 3],
+            timeout,
+        };
+
+        let start = Instant::now();
+        let _ = discover(&one);
+        let single = start.elapsed();
+
+        let start = Instant::now();
+        let _ = discover(&three);
+        let triple = start.elapsed();
+
+        // Three addresses should take roughly three windows, not one. Compare against the
+        // measured single-address duration so the assertion doesn't depend on wall-clock
+        // precision or scheduler noise.
+        assert!(
+            triple >= single * 2,
+            "three bind addresses took {triple:?} but one took {single:?}; the deadline looks shared"
+        );
     }
 }
