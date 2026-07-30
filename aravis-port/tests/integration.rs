@@ -138,8 +138,18 @@ fn camera_start_stream_recovers_frames_despite_packet_loss() {
 
     let cam = Camera::connect_addr(camera.local_addr()).unwrap();
     let (tx, rx) = std::sync::mpsc::channel();
+    // `packet_request_ratio` caps resend requests at a fraction of a frame's packet count. A
+    // 128x128 frame is only ~15 packets, so the default 0.25 caps resends at 3 while 15% loss
+    // costs ~2.25 packets per frame — the cap, not resend, would decide the outcome. Real frames
+    // (a 2048x1088 Mono8 image is ~1600 packets) get a cap in the hundreds, so lifting it here
+    // is what makes this test measure resend recovery the way production would experience it.
+    let cfg = StreamConfig {
+        packet_size: 1400,
+        packet_request_ratio: 1.0,
+        ..StreamConfig::default()
+    };
     let stream = cam
-        .start_stream(move |buffer: Buffer| {
+        .start_stream_with_config(cfg, move |buffer: Buffer| {
             let _ = tx.send(buffer);
         })
         .unwrap();
@@ -150,6 +160,10 @@ fn camera_start_stream_recovers_frames_despite_packet_loss() {
         if let Ok(buf) = rx.recv_timeout(Duration::from_secs(3)) {
             total += 1;
             if buf.status == BufferStatus::Success {
+                // A recovered frame must be byte-correct, not merely complete: every payload
+                // packet has to land at the right offset. Checking the length catches a stride
+                // that drifts per packet, which otherwise silently interleaves zero gaps.
+                assert_eq!(buf.data().len(), 128 * 128, "recovered frame has a misaligned payload stride");
                 successes += 1;
             }
         }

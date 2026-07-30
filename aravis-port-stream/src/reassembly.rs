@@ -20,8 +20,19 @@ const EXTENDED_HEADER_LEN: usize = 18;
 /// would need to.
 const LATE_FRAME_THRESHOLD: u64 = 100;
 
+/// `GevSCPSPacketSize` counts the whole datagram as it appears on the wire, so the IP and UDP
+/// headers come out of the same budget as the GVSP payload — confirmed against the live
+/// C5-2040-GigE, which at `GevSCPSPacketSize = 1400` sends 1364-byte payloads
+/// (1400 - 20 - 8 - 8). Omitting these 28 bytes makes every payload offset drift by 28 per
+/// packet, which silently interleaves zero gaps through the image rather than failing.
+const IP_HEADER_LEN: usize = 20;
+const UDP_HEADER_LEN: usize = 8;
+
 fn per_packet_capacity(packet_size: u16, extended: bool) -> usize {
-    let overhead = STATUS_LEN + if extended { EXTENDED_HEADER_LEN } else { STANDARD_HEADER_LEN };
+    let overhead = IP_HEADER_LEN
+        + UDP_HEADER_LEN
+        + STATUS_LEN
+        + if extended { EXTENDED_HEADER_LEN } else { STANDARD_HEADER_LEN };
     (packet_size as usize).saturating_sub(overhead).max(1)
 }
 
@@ -33,7 +44,19 @@ struct PacketSlot {
 struct FrameAssembly {
     extended: bool,
     buffer: Buffer,
+    /// Stride between consecutive payload packets' offsets. Seeded from
+    /// [`per_packet_capacity`] and then corrected to the observed length of packet 1, which is
+    /// authoritative: every payload packet but the last is full-size, so packet 1 is full-size
+    /// whenever the frame has more than one payload packet — and when it's the only one, the
+    /// stride is never used.
     packet_capacity: usize,
+    /// How many payload packets have been written into `buffer` so far. Used to tell whether a
+    /// late stride correction can still be applied safely.
+    payloads_placed: usize,
+    /// Set when a stride correction arrived too late to apply, meaning the assembled bytes are
+    /// misaligned. Sticky, and forced onto the buffer at close time even if the frame otherwise
+    /// looks complete — the packets all arrived, they just can't be laid out correctly.
+    size_mismatch: bool,
     /// Grows on demand as packet ids are observed; index == GVSP packet id (0 = leader).
     slots: Vec<PacketSlot>,
     trailer_packet_id: Option<usize>,
@@ -52,6 +75,8 @@ impl FrameAssembly {
             extended,
             buffer,
             packet_capacity,
+            payloads_placed: 0,
+            size_mismatch: false,
             slots: Vec::new(),
             trailer_packet_id: None,
             last_valid_contiguous: -1,
@@ -124,12 +149,40 @@ impl FrameAssembly {
             }
             ContentType::Payload => {
                 if packet_id >= 1 {
+                    // Packet 1 is authoritative for the stride (see `packet_capacity`). Cameras
+                    // vary in how they account for header overhead against
+                    // `GevSCPSPacketSize`, so trust what actually arrived over the computed
+                    // estimate. In the normal in-order case nothing has been placed yet and the
+                    // correction is free; if packets got reordered ahead of packet 1 and the
+                    // stride was wrong, the already-written offsets cannot be fixed after the
+                    // fact, so fail the frame loudly instead of returning interleaved zeros.
+                    if packet_id == 1 && payload.len() != self.packet_capacity {
+                        if self.payloads_placed == 0 {
+                            log::debug!(
+                                "correcting payload stride from {} to {} (observed on packet 1)",
+                                self.packet_capacity,
+                                payload.len()
+                            );
+                            self.packet_capacity = payload.len();
+                        } else {
+                            log::warn!(
+                                "payload stride {} disagrees with packet 1's {} after {} packet(s) already placed; \
+                                 failing frame {}",
+                                self.packet_capacity,
+                                payload.len(),
+                                self.payloads_placed,
+                                self.buffer.frame_id
+                            );
+                            self.size_mismatch = true;
+                        }
+                    }
                     let offset = (packet_id - 1) * self.packet_capacity;
                     let end = offset + payload.len();
                     if self.buffer.data().len() < end {
                         self.buffer.data_mut().resize(end, 0);
                     }
                     self.buffer.data_mut()[offset..end].copy_from_slice(payload);
+                    self.payloads_placed += 1;
                 }
                 self.slots[packet_id].received = true;
             }
@@ -299,7 +352,11 @@ impl Reassembler {
         let mut closed = Vec::with_capacity(to_close.len());
         for (id, status) in to_close {
             if let Some(mut frame) = self.frames.remove(&id) {
-                frame.buffer.status = status;
+                frame.buffer.status = if frame.size_mismatch {
+                    BufferStatus::SizeMismatch
+                } else {
+                    status
+                };
                 closed.push(frame.buffer);
             }
         }
@@ -357,11 +414,89 @@ mod tests {
     }
 
     #[test]
-    fn out_of_order_packets_still_complete_the_frame() {
-        // packet_size chosen so the per-payload-packet capacity (packet_size - 8 byte overhead)
-        // is exactly 4, matching this test's 4-byte payload chunks.
+    fn payload_stride_accounts_for_ip_and_udp_headers() {
+        // `GevSCPSPacketSize` budgets the whole wire datagram, so IP (20) and UDP (8) come out
+        // of it alongside the GVSP header. Verified against the live C5-2040-GigE: at 1400 it
+        // sends 1364-byte payloads.
+        assert_eq!(per_packet_capacity(1400, false), 1364);
+        assert_eq!(per_packet_capacity(1500, false), 1464);
+        assert_eq!(per_packet_capacity(1400, true), 1352);
+        // Degenerate sizes that can't even cover the headers must still yield a usable stride.
+        assert_eq!(per_packet_capacity(12, false), 1);
+    }
+
+    #[test]
+    fn stride_is_corrected_from_packet_one_when_the_estimate_is_wrong() {
+        // Estimate says 4 bytes/packet, but the camera actually sends 6. Packet 1 is
+        // authoritative, so the frame must still assemble contiguously with no zero gaps.
         let cfg = StreamConfig {
-            packet_size: 12,
+            packet_size: 40,
+            ..StreamConfig::default()
+        };
+        let mut reassembler = Reassembler::new(cfg);
+        let (_user, stream) = new_buffer_pool(2, 64);
+        let mut requester = MockRequester { requests: Vec::new() };
+        let now = Instant::now();
+
+        let leader = leader_bytes(true);
+        reassembler.process_packet(GvspStatus::Success, header(1, ContentType::Leader, 0), &leader, &stream, &mut requester, now);
+        for (packet_id, payload) in [(1u32, b"AAAAAA".to_vec()), (2, b"BBBBBB".to_vec())] {
+            reassembler.process_packet(
+                GvspStatus::Success,
+                header(1, ContentType::Payload, packet_id),
+                &payload,
+                &stream,
+                &mut requester,
+                now,
+            );
+        }
+        let trailer = trailer_bytes();
+        let closed = reassembler.process_packet(GvspStatus::Success, header(1, ContentType::Trailer, 3), &trailer, &stream, &mut requester, now);
+
+        assert_eq!(closed.len(), 1);
+        assert_eq!(closed[0].status, aravis_port_core::memory::BufferStatus::Success);
+        assert_eq!(closed[0].data(), b"AAAAAABBBBBB");
+    }
+
+    #[test]
+    fn a_late_stride_correction_fails_the_frame_rather_than_misaligning_it() {
+        // Same wrong estimate, but packet 2 lands before packet 1, so by the time the true
+        // stride is known packet 2 is already at the wrong offset and can't be moved. The frame
+        // must report SizeMismatch rather than hand back interleaved zeros.
+        let cfg = StreamConfig {
+            packet_size: 40,
+            ..StreamConfig::default()
+        };
+        let mut reassembler = Reassembler::new(cfg);
+        let (_user, stream) = new_buffer_pool(2, 64);
+        let mut requester = MockRequester { requests: Vec::new() };
+        let now = Instant::now();
+
+        let leader = leader_bytes(true);
+        reassembler.process_packet(GvspStatus::Success, header(1, ContentType::Leader, 0), &leader, &stream, &mut requester, now);
+        for (packet_id, payload) in [(2u32, b"BBBBBB".to_vec()), (1, b"AAAAAA".to_vec())] {
+            reassembler.process_packet(
+                GvspStatus::Success,
+                header(1, ContentType::Payload, packet_id),
+                &payload,
+                &stream,
+                &mut requester,
+                now,
+            );
+        }
+        let trailer = trailer_bytes();
+        let closed = reassembler.process_packet(GvspStatus::Success, header(1, ContentType::Trailer, 3), &trailer, &stream, &mut requester, now);
+
+        assert_eq!(closed.len(), 1);
+        assert_eq!(closed[0].status, aravis_port_core::memory::BufferStatus::SizeMismatch);
+    }
+
+    #[test]
+    fn out_of_order_packets_still_complete_the_frame() {
+        // packet_size chosen so the per-payload-packet capacity is exactly 4, matching this
+        // test's 4-byte payload chunks: 20 (IP) + 8 (UDP) + 8 (GVSP status+header) + 4.
+        let cfg = StreamConfig {
+            packet_size: 40,
             ..StreamConfig::default()
         };
         let mut reassembler = Reassembler::new(cfg);

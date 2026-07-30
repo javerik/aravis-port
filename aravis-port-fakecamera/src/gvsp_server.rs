@@ -12,13 +12,32 @@ use crate::loss::LossInjector;
 use crate::pattern;
 use crate::registers::feature;
 
-const HEADER_OVERHEAD: usize = 8; // 2-byte status + 6-byte standard GVSP header
+/// `GevSCPSPacketSize` budgets the entire wire datagram, so a real camera fits its GVSP payload
+/// into what's left after the IP and UDP headers as well: 20 (IP) + 8 (UDP) + 2 (status) +
+/// 6 (standard GVSP header). Modelling only the 8 GVSP bytes here would make this fake agree
+/// with a reassembler that made the same mistake, hiding a stride bug that real hardware
+/// exposes immediately.
+const HEADER_OVERHEAD: usize = 20 + 8 + 2 + 6;
 const HAS_CHUNKS_BIT: u16 = 0x4000;
 
 /// Chunk id used for the single "FrameID" chunk this fake camera appends when chunk mode is
 /// active — a 4-byte big-endian copy of the frame id, matching the reverse-TLV layout
 /// `aravis_port_core::memory::ChunkTlvIndex` expects.
 pub const CHUNK_ID_FRAME_ID: u32 = 1;
+
+/// The packet size a real camera would actually packetize with: whatever the controller
+/// negotiated via `GevSCPSPacketSize`, falling back to this fake's configured default when the
+/// register was never written. The live-send and resend paths must agree on this — if one used
+/// the negotiated value and the other the configured default, resent packets would carry a
+/// different payload length and land at the wrong offsets.
+pub(crate) fn negotiated_packet_size(bank: &crate::registers::RegisterBank, fallback: u16) -> u16 {
+    let negotiated = (bank.read_u32(offset::STREAM_CHANNEL_0_PACKET_SIZE) & 0xffff) as u16;
+    if negotiated > 0 {
+        negotiated
+    } else {
+        fallback
+    }
+}
 
 pub(crate) fn spawn(
     shared: Arc<Mutex<SharedState>>,
@@ -48,7 +67,7 @@ fn run(
             Err(RecvTimeoutError::Timeout) => {}
         }
 
-        let (dest, width, height, pixel_format, active, chunk_mode) = {
+        let (dest, width, height, pixel_format, active, chunk_mode, packet_size) = {
             let state = shared.lock().unwrap();
             let dest_ip = Ipv4Addr::from(state.bank.read_u32(offset::STREAM_CHANNEL_0_IP));
             // Port occupies the low 16 bits — matches `Device::open_stream_channel` and the
@@ -61,6 +80,7 @@ fn run(
                 state.bank.read_u32(feature::PIXEL_FORMAT),
                 state.bank.read_u32(feature::ACQUISITION_ACTIVE) != 0,
                 state.bank.read_u32(feature::CHUNK_MODE_ACTIVE) != 0,
+                negotiated_packet_size(&state.bank, packet_size),
             )
         };
 

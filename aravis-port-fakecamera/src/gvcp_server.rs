@@ -197,7 +197,7 @@ fn handle_resend(state: &SharedState, body: &[u8], extended: bool) {
         width,
         height,
         pixel_format,
-        state.packet_size,
+        crate::gvsp_server::negotiated_packet_size(&state.bank, state.packet_size),
         chunk_mode,
         first,
         last,
