@@ -116,3 +116,29 @@ fn non_controller_writes_are_rejected() {
     // The privileged device's earlier write is unaffected.
     assert_eq!(camera.peek_register(feature::WIDTH), 64);
 }
+
+#[test]
+fn genicam_xml_is_retained_for_introspection() {
+    let camera = FakeCamera::start(FakeCameraConfig::default()).unwrap();
+    let device = Device::connect(camera.local_addr(), fast_device_config()).unwrap();
+
+    let xml = device.genicam_xml();
+    assert!(xml.contains("RegisterDescription"), "expected a GenICam document, got {:?}", &xml[..xml.len().min(120)]);
+    assert!(xml.contains(r#"Name="Width""#));
+    // Must be the document the device actually served, not a re-fetch or a reconstruction.
+    assert_eq!(xml.as_bytes(), camera.xml_bytes().as_slice());
+}
+
+#[test]
+fn feature_kind_reports_node_kinds_and_absence() {
+    let camera = FakeCamera::start(FakeCameraConfig::default()).unwrap();
+    let device = Device::connect(camera.local_addr(), fast_device_config()).unwrap();
+
+    assert_eq!(device.feature_kind("Width"), Some("Integer"));
+    assert_eq!(device.feature_kind("ExposureTime"), Some("Float"));
+    assert_eq!(device.feature_kind("PixelFormat"), Some("Enumeration"));
+    assert_eq!(device.feature_kind("ChunkModeActive"), Some("Boolean"));
+    assert_eq!(device.feature_kind("AcquisitionStart"), Some("Command"));
+    // A name this camera simply doesn't have.
+    assert_eq!(device.feature_kind("NoSuchFeature"), None);
+}

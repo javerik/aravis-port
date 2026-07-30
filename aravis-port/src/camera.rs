@@ -73,6 +73,18 @@ impl Camera {
         self.device.categories()
     }
 
+    /// This camera's GenICam XML, exactly as it was fetched at connect time.
+    pub fn genicam_xml(&self) -> &str {
+        self.device.genicam_xml()
+    }
+
+    /// The GenICam node kind for `name` (`"Integer"`, `"Enumeration"`, `"StringReg"`, …), or
+    /// `None` when this camera's XML has no such node or it is a kind this crate does not model.
+    /// See [`Device::feature_kind`].
+    pub fn feature_kind(&self, name: &str) -> Option<&'static str> {
+        self.device.feature_kind(name)
+    }
+
     /// `false` once the heartbeat thread has observed lost control-channel privilege.
     pub fn has_control(&self) -> bool {
         self.device.has_control()

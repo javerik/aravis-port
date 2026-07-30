@@ -34,6 +34,11 @@ impl Default for DeviceConfig {
 pub struct Device {
     conn: Arc<Mutex<GvcpTransaction>>,
     genicam: GenApiTree,
+    /// The device's GenICam XML as fetched, retained so callers can serve or introspect it
+    /// without a second fetch. Costs a few hundred KB per connected device — the document is
+    /// only reachable through bootstrap registers and is typically zip-compressed, so
+    /// re-fetching it on demand is far more expensive than keeping it.
+    genicam_xml: String,
     heartbeat: Option<HeartbeatHandle>,
     control_lost: Arc<AtomicBool>,
 }
@@ -48,7 +53,8 @@ impl Device {
             control_channel_privilege::EXCLUSIVE | control_channel_privilege::CONTROL,
         )?;
         let xml = xml_fetch::fetch(&mut txn)?;
-        let genicam = GenApiTree::parse(&String::from_utf8_lossy(&xml)).map_err(|e| Error::GenIcam(e.to_string()))?;
+        let genicam_xml = String::from_utf8_lossy(&xml).into_owned();
+        let genicam = GenApiTree::parse(&genicam_xml).map_err(|e| Error::GenIcam(e.to_string()))?;
 
         let conn = Arc::new(Mutex::new(txn));
         let control_lost = Arc::new(AtomicBool::new(false));
@@ -56,6 +62,7 @@ impl Device {
         Ok(Self {
             conn,
             genicam,
+            genicam_xml,
             heartbeat: Some(heartbeat),
             control_lost,
         })
@@ -113,6 +120,22 @@ impl Device {
     /// Execute a GenICam `Command` feature (e.g. `"AcquisitionStart"`).
     pub fn execute_command(&self, name: &str) -> Result<()> {
         self.with_io(|tree, io| tree.execute_command(io, name).map_err(|e| Error::GenIcam(e.to_string())))
+    }
+
+    /// This device's GenICam XML, exactly as it was fetched at connect time.
+    pub fn genicam_xml(&self) -> &str {
+        &self.genicam_xml
+    }
+
+    /// The GenICam node kind for `name` (`"Integer"`, `"Float"`, `"Enumeration"`, `"StringReg"`,
+    /// `"Command"`, …), or `None` when this device's XML has no such node or it is a kind this
+    /// crate does not model.
+    ///
+    /// Useful for deciding which typed accessor to call before calling it, and for telling
+    /// apart "this camera has no such feature" from "this feature exists but cannot be
+    /// evaluated" — a distinction [`Device::read`] flattens into an error string.
+    pub fn feature_kind(&self, name: &str) -> Option<&'static str> {
+        self.genicam.node_id(name).ok().map(|id| self.genicam.node_kind(id))
     }
 
     /// The feature names directly under the `"Root"` category, in XML document order.
