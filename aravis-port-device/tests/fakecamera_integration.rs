@@ -142,3 +142,14 @@ fn feature_kind_reports_node_kinds_and_absence() {
     // A name this camera simply doesn't have.
     assert_eq!(device.feature_kind("NoSuchFeature"), None);
 }
+
+#[test]
+fn failed_connect_releases_control_privilege() {
+    let camera = FakeCamera::start(FakeCameraConfig::default()).unwrap();
+    // Corrupt the bootstrap XML URL ("Local:..." -> "Xxxxl:...") so connect fails after it has
+    // already taken control-channel privilege.
+    camera.poke_register(offset::XML_URL_0, u32::from_be_bytes(*b"Xxxx"));
+
+    assert!(Device::connect(camera.local_addr(), fast_device_config()).is_err());
+    assert_eq!(camera.controller(), None, "failed connect left the device controlled");
+}

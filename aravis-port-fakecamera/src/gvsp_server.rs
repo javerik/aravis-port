@@ -25,6 +25,15 @@ const HAS_CHUNKS_BIT: u16 = 0x4000;
 /// `aravis_port_core::memory::ChunkTlvIndex` expects.
 pub const CHUNK_ID_FRAME_ID: u32 = 1;
 
+/// Chunk id of the image itself in chunk mode. GigE Vision chunk data wraps the image as the
+/// first chunk, so the whole payload is a chain of `[data][id][size]` blocks; this id is the one
+/// the live C6-2040-GigE uses.
+pub const CHUNK_ID_IMAGE: u32 = 0xa6a6_a6a6;
+
+/// Bytes chunk mode adds after the image: the image chunk's `[id][size]` trailer, then the
+/// 4-byte FrameID chunk with its own trailer.
+pub const CHUNK_MODE_EXTRA_BYTES: u32 = 8 + 4 + 8;
+
 /// The packet size a real camera would actually packetize with: whatever the controller
 /// negotiated via `GevSCPSPacketSize`, falling back to this fake's configured default when the
 /// register was never written. The live-send and resend paths must agree on this — if one used
@@ -110,10 +119,10 @@ fn send_gvsp(socket: &UdpSocket, dest: SocketAddrV4, frame_id: u64, content_type
 
 /// Builds every packet (content type, packet id, payload bytes) that make up a frame. Pure
 /// function of its arguments, so a resend request can regenerate any subset of a frame's packets
-/// on demand without the server needing to retain per-frame history. When `chunk_mode` is set, a
-/// single "FrameID" chunk (see [`CHUNK_ID_FRAME_ID`]) is appended after the image data, in the
-/// reverse-TLV layout `aravis_port_core::memory::ChunkTlvIndex` expects, and the leader's
-/// `has_chunks` bit is set.
+/// on demand without the server needing to retain per-frame history. When `chunk_mode` is set,
+/// the image is wrapped as a chunk (see [`CHUNK_ID_IMAGE`]) followed by a "FrameID" chunk (see
+/// [`CHUNK_ID_FRAME_ID`]), in the reverse-TLV layout `aravis_port_core::memory::ChunkTlvIndex`
+/// expects, and the leader's `has_chunks` bit is set.
 fn build_frame_packets(
     frame_id: u64,
     width: u32,
@@ -126,6 +135,9 @@ fn build_frame_packets(
     let mut payload_type = PayloadKind::Image.to_u16();
     if chunk_mode {
         payload_type |= HAS_CHUNKS_BIT;
+        let image_len = image.len() as u32;
+        image.extend_from_slice(&CHUNK_ID_IMAGE.to_be_bytes());
+        image.extend_from_slice(&image_len.to_be_bytes());
         let chunk_data = (frame_id as u32).to_be_bytes();
         image.extend_from_slice(&chunk_data);
         image.extend_from_slice(&CHUNK_ID_FRAME_ID.to_be_bytes());

@@ -62,8 +62,16 @@ For each, after the previous step's crate is confirmed live on crates.io: `cargo
 
 Each of `aravis-port-device` and `aravis-port` has a `live_check_*` example under its `examples/` directory, used during development to validate against a real camera on the network (not part of `cargo test`, since CI has no camera attached). Run with `cargo run -p <crate> --example <name> -- <args>`; see each file for its expected arguments.
 
+For asserting end-to-end coverage against a real camera, `aravis-port` also has the `LiveCamIntegrationTests` suite (`aravis-port/tests/live_cam_integration_tests.rs`). It runs only when given the serial number of a camera on the network, and otherwise prints a "skipped" line and passes:
+
+```sh
+cargo test -p aravis-port --test live_cam_integration_tests -- --serial <SN> [name-filter] [--bind <local-ip> --broadcast <directed-broadcast-ip>]
+```
+
+Pass `--serial` only together with `--test live_cam_integration_tests`: the other test binaries use the standard libtest harness and reject unknown flags.
+
 ## Known limitations
 
 - **No local network interface enumeration.** `std` has no safe API for this, so [`aravis_port::net::discover`] requires an explicit bind address/directed-broadcast pair rather than scanning every NIC automatically.
 - **No `SO_RCVBUF` control.** See the note in `aravis-port-device::net`'s module docs — an OS-level `sysctl` tuning concern at very high frame rates, not something this crate can address without an additional dependency.
-- **GenICam node coverage** targets the practical subset real GEV cameras use (validated against the two devices above): `Category`, `Integer`, `Float`, `Boolean`, `Enumeration`, `Command`, `StringReg`, `IntReg`/`MaskedIntReg`, `FloatReg`, `Converter`, `SwissKnife`. Less common node kinds (`StructEntry`, `IndexNode`, `Selector` as a first-class interface) are not modeled; `Port`/generic `Register` elements resolve as inert placeholders so a document referencing them still parses.
+- **GenICam node coverage** targets the practical subset real GEV cameras use (validated against the two devices above): `Category`, `Integer`, `Float`, `Boolean`, `Enumeration`, `Command`, `StringReg`, `IntReg`/`MaskedIntReg`, `StructReg`/`StructEntry`, `String`, `FloatReg`, `Converter`, `SwissKnife`, and chunk-data ports (`Camera::read_chunk`), with `pIndex` addressing and `pIsImplemented`/`pIsAvailable` (`Camera::is_available`). Less common node kinds (`IndexNode`, `Selector` as a first-class interface) are not modeled; `Port`/generic `Register` elements resolve as inert placeholders so a document referencing them still parses.

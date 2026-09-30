@@ -2,10 +2,12 @@
 
 mod header;
 mod leader;
+mod multipart;
 mod trailer;
 
 pub use header::{ContentType, GvspHeader, GvspStatus};
 pub use leader::{ImageInfos, LeaderPayload, PayloadKind};
+pub use multipart::{MultipartBlock, PartInfos, MULTIPART_BLOCK_HEADER_LEN, PART_INFOS_LEN};
 pub use trailer::TrailerPayload;
 
 /// Minimum/maximum GVSP payload sizes (excluding the 2-byte status prefix).

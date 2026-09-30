@@ -6,21 +6,21 @@ pub enum ChunkError {
     Malformed(usize),
 }
 
-/// An index over chunk data appended after image payload: a reverse linked list of
-/// length-prefixed-from-the-end TLV blocks — `[data][id:u32 BE][size:u32 BE]` repeated, where
-/// `size` covers only `data`. Built once per buffer, then looked up by chunk id.
+/// An index over a GigE Vision chunk payload: a reverse linked list of length-prefixed-from-the-end
+/// TLV blocks — `[data][id:u32 BE][size:u32 BE]` repeated, where `size` covers only `data`. Built
+/// once per buffer, then looked up by chunk id.
 #[derive(Debug, Clone, Default)]
 pub struct ChunkTlvIndex {
     offsets: HashMap<u32, (usize, usize)>,
 }
 
 impl ChunkTlvIndex {
-    /// Walk `data` backward from the end, indexing each `(id, size)` trailer. `data` must be
-    /// *only* the chunk-data region (`received_size - image_size` trailing bytes of a buffer,
-    /// per the GVSP leader's declared image size) — not the whole buffer, since walking into
-    /// unrelated leading pixel data would misinterpret it as further chunk trailers. Returns
-    /// `ChunkError::Malformed` rather than panicking on a corrupt/adversarial trailer whose
-    /// implied start would underflow.
+    /// Walk `data` backward from the end, indexing each `(id, size)` trailer, as Aravis's
+    /// `arv_buffer_get_chunk_data` does. In chunk mode a GigE Vision device wraps the image
+    /// itself as the first chunk (confirmed on the live C6-2040-GigE), so `data` can be the whole
+    /// received payload; every byte must belong to some chunk, since anything that doesn't would
+    /// be misread as further trailers. Returns `ChunkError::Malformed` rather than panicking on a
+    /// corrupt/adversarial trailer whose implied start would underflow.
     pub fn build(data: &[u8]) -> Result<Self, ChunkError> {
         let mut offsets = HashMap::new();
         let mut cursor = data.len();

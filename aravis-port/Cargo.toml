@@ -21,3 +21,10 @@ aravis-port-stream.workspace = true
 # is used consistently for these test-only cross-crate dependencies.
 aravis-port-fakecamera = { path = "../aravis-port-fakecamera" }
 env_logger.workspace = true
+
+# Runs only when given `--serial <SN>` of a camera on the network; see the file's header comment.
+# Uses its own runner because libtest rejects unknown arguments.
+[[test]]
+name = "live_cam_integration_tests"
+path = "tests/live_cam_integration_tests.rs"
+harness = false

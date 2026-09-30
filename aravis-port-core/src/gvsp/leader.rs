@@ -75,6 +75,8 @@ pub struct LeaderPayload {
     /// Raw payload_type field (kind in low 14 bits, has_chunks in bit 14).
     pub payload_type: u16,
     pub timestamp: u64,
+    /// The image layout: from the image leader for `Image` payloads, and from the first part
+    /// descriptor for `Multipart` payloads (as Aravis's buffer image accessors default to part 0).
     pub image: Option<ImageInfos>,
 }
 
@@ -127,6 +129,8 @@ impl LeaderPayload {
                 x_padding: u16::from_be_bytes(b[20..22].try_into().unwrap()),
                 y_padding: u16::from_be_bytes(b[22..24].try_into().unwrap()),
             })
+        } else if matches!(kind, PayloadKind::Multipart) && bytes.len() >= 12 + super::PART_INFOS_LEN {
+            Some(super::PartInfos::decode(&bytes[12..])?.image)
         } else {
             None
         };

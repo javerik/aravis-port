@@ -5,11 +5,12 @@ use std::time::Duration;
 
 use aravis_port_core::bootstrap::{control_channel_privilege, offset};
 use aravis_port_core::{Error, Result};
-use aravis_port_genicam::GenApiTree;
+use aravis_port_core::memory::Buffer;
+use aravis_port_genicam::{ChunkDataAccess, GenApiTree};
 
 use crate::feature::FeatureValue;
 use crate::heartbeat::HeartbeatHandle;
-use crate::io::GvcpTransactionIo;
+use crate::io::{uses_legacy_register_access, GvcpTransactionIo};
 use crate::net::{GvcpTransaction, TransactionConfig};
 use crate::xml_fetch;
 
@@ -41,6 +42,8 @@ pub struct Device {
     genicam_xml: String,
     heartbeat: Option<HeartbeatHandle>,
     control_lost: Arc<AtomicBool>,
+    /// Decided once from the XML at connect time; see [`uses_legacy_register_access`].
+    legacy_register_access: bool,
 }
 
 impl Device {
@@ -52,10 +55,23 @@ impl Device {
             offset::CONTROL_CHANNEL_PRIVILEGE,
             control_channel_privilege::EXCLUSIVE | control_channel_privilege::CONTROL,
         )?;
-        let xml = xml_fetch::fetch(&mut txn)?;
-        let genicam_xml = String::from_utf8_lossy(&xml).into_owned();
-        let genicam = GenApiTree::parse(&genicam_xml).map_err(|e| Error::GenIcam(e.to_string()))?;
+        let fetched = xml_fetch::fetch(&mut txn).and_then(|xml| {
+            let genicam_xml = String::from_utf8_lossy(&xml).into_owned();
+            let genicam = GenApiTree::parse(&genicam_xml).map_err(|e| Error::GenIcam(e.to_string()))?;
+            Ok((genicam_xml, genicam))
+        });
+        let (genicam_xml, genicam) = match fetched {
+            Ok(fetched) => fetched,
+            Err(e) => {
+                // No `Device` exists yet whose `Drop` would release the privilege, so release
+                // it here. Otherwise the device refuses every other client (including a retry
+                // from this one) until its heartbeat timeout expires.
+                let _ = txn.write_register(offset::CONTROL_CHANNEL_PRIVILEGE, 0);
+                return Err(e);
+            }
+        };
 
+        let legacy_register_access = uses_legacy_register_access(genicam.register_description());
         let conn = Arc::new(Mutex::new(txn));
         let control_lost = Arc::new(AtomicBool::new(false));
         let heartbeat = HeartbeatHandle::spawn(conn.clone(), cfg.heartbeat_period, control_lost.clone());
@@ -65,13 +81,17 @@ impl Device {
             genicam_xml,
             heartbeat: Some(heartbeat),
             control_lost,
+            legacy_register_access,
         })
     }
 
     /// Run `f` with the parsed GenICam tree and a `RegisterAccess` bridge over the shared
     /// transaction.
     pub(crate) fn with_io<T>(&self, f: impl FnOnce(&GenApiTree, &mut GvcpTransactionIo) -> Result<T>) -> Result<T> {
-        let mut io = GvcpTransactionIo(self.conn.clone());
+        let mut io = GvcpTransactionIo {
+            conn: self.conn.clone(),
+            legacy_register_access: self.legacy_register_access,
+        };
         f(&self.genicam, &mut io)
     }
 
@@ -112,6 +132,23 @@ impl Device {
         T::get(self, name)
     }
 
+    /// Read a chunk feature (e.g. `"ChunkFrameID"`) from an acquired buffer's chunk data, the
+    /// way Aravis's `ArvChunkParser` does. Chunk mode must have been active (`ChunkModeActive`)
+    /// when `buffer` was acquired. Registers the feature's address depends on that are not in
+    /// the chunk (such as a selector) are still read from the device.
+    pub fn read_chunk<T: FeatureValue>(&self, buffer: &Buffer, name: &str) -> Result<T> {
+        self.with_io(|tree, io| {
+            let mut chunk_io = ChunkDataAccess::new(io, buffer.data()).map_err(Error::Io)?;
+            T::get_from(tree, &mut chunk_io, name)
+        })
+    }
+
+    /// Whether feature `name` is currently implemented and available (its `pIsImplemented` and
+    /// `pIsAvailable` conditions hold). GenICam browsers show unavailable features as "-".
+    pub fn is_available(&self, name: &str) -> Result<bool> {
+        self.with_io(|tree, io| tree.is_available(io, name).map_err(|e| Error::GenIcam(e.to_string())))
+    }
+
     /// Write a feature by name (`device.write("ExposureTime", 1000.0)`).
     pub fn write<T: FeatureValue>(&self, name: &str, value: T) -> Result<()> {
         T::set(self, name, value)
@@ -149,16 +186,25 @@ impl Device {
         self.conn.lock().unwrap().read_register(address)
     }
 
+    /// Raw register write. Drops the GenICam register cache, since the write bypasses the node
+    /// tree's invalidators: on the live C6-2040-GigE, for example, the cached `PayloadSize`
+    /// changes with `GevSCPSPacketSize`, which is written this way and isn't one of its
+    /// invalidators.
     pub fn write_register(&self, address: u32, value: u32) -> Result<()> {
-        self.conn.lock().unwrap().write_register(address, value)
+        let result = self.conn.lock().unwrap().write_register(address, value);
+        self.genicam.invalidate_cache();
+        result
     }
 
     pub fn read_memory(&self, address: u32, len: usize) -> Result<Vec<u8>> {
         self.conn.lock().unwrap().read_memory(address, len)
     }
 
+    /// Raw memory write. Drops the GenICam register cache; see [`Device::write_register`].
     pub fn write_memory(&self, address: u32, data: &[u8]) -> Result<()> {
-        self.conn.lock().unwrap().write_memory(address, data)
+        let result = self.conn.lock().unwrap().write_memory(address, data);
+        self.genicam.invalidate_cache();
+        result
     }
 
     /// `false` once the heartbeat thread has observed a lost/never-acquired control channel.

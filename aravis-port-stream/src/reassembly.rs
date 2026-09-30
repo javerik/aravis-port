@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::time::Instant;
 
 use aravis_port_core::gvcp::PacketResend;
-use aravis_port_core::gvsp::{ContentType, GvspHeader, GvspStatus, LeaderPayload};
+use aravis_port_core::gvsp::{ContentType, GvspHeader, GvspStatus, LeaderPayload, MultipartBlock};
 use aravis_port_core::memory::{Buffer, BufferStatus, BufferPoolStreamSide, PayloadType};
 
 use crate::config::StreamConfig;
@@ -44,6 +44,10 @@ struct PacketSlot {
 struct FrameAssembly {
     extended: bool,
     buffer: Buffer,
+    /// The buffer's allocated size (the device's `PayloadSize`). Multi-part blocks carry their
+    /// own offsets, and are clipped to this rather than growing the buffer to whatever size a
+    /// packet claims.
+    allocated_size: usize,
     /// Stride between consecutive payload packets' offsets. Seeded from
     /// [`per_packet_capacity`] and then corrected to the observed length of packet 1, which is
     /// authoritative: every payload packet but the last is full-size, so packet 1 is full-size
@@ -68,12 +72,14 @@ struct FrameAssembly {
 
 impl FrameAssembly {
     fn new(frame_id: u64, extended: bool, mut buffer: Buffer, packet_capacity: usize, now: Instant) -> Self {
+        let allocated_size = buffer.data().len().max(buffer.data_mut().capacity());
         buffer.reset_for_reuse();
         buffer.frame_id = frame_id;
         buffer.status = BufferStatus::Filling;
         Self {
             extended,
             buffer,
+            allocated_size,
             packet_capacity,
             payloads_placed: 0,
             size_mismatch: false,
@@ -128,6 +134,7 @@ impl FrameAssembly {
                         aravis_port_core::gvsp::PayloadKind::Image => PayloadType::Image,
                         aravis_port_core::gvsp::PayloadKind::ChunkData => PayloadType::ChunkData,
                         aravis_port_core::gvsp::PayloadKind::RawData => PayloadType::RawData,
+                        aravis_port_core::gvsp::PayloadKind::Multipart => PayloadType::Multipart,
                         _ => PayloadType::Unknown,
                     };
                     self.buffer.timestamp_ns = leader.timestamp;
@@ -183,6 +190,37 @@ impl FrameAssembly {
                     }
                     self.buffer.data_mut()[offset..end].copy_from_slice(payload);
                     self.payloads_placed += 1;
+                }
+                self.slots[packet_id].received = true;
+            }
+            ContentType::Multipart => {
+                match MultipartBlock::decode(payload) {
+                    Ok((block, data)) => {
+                        match usize::try_from(block.offset) {
+                            // The final block of a frame may be padded to a full packet (confirmed
+                            // on the live C6-2040-GigE at GevSCPSPacketSize 1000: 432 bytes past
+                            // PayloadSize), so bytes beyond the buffer are dropped as padding
+                            // rather than dropping the whole block and its real data with them.
+                            Ok(offset) if offset < self.allocated_size => {
+                                let end = offset + data.len().min(self.allocated_size - offset);
+                                if self.buffer.data().len() < end {
+                                    self.buffer.data_mut().resize(end, 0);
+                                }
+                                self.buffer.data_mut()[offset..end].copy_from_slice(&data[..end - offset]);
+                            }
+                            _ => {
+                                log::warn!(
+                                    "multi-part block at offset {} ({} bytes) starts past the {}-byte buffer; failing frame {}",
+                                    block.offset,
+                                    data.len(),
+                                    self.allocated_size,
+                                    self.buffer.frame_id
+                                );
+                                self.size_mismatch = true;
+                            }
+                        }
+                    }
+                    Err(_) => self.size_mismatch = true,
                 }
                 self.slots[packet_id].received = true;
             }
@@ -368,6 +406,7 @@ impl Reassembler {
 mod tests {
     use super::*;
     use aravis_port_core::gvsp::{ContentType, GvspHeader, GvspStatus, ImageInfos, PayloadKind};
+    use aravis_port_core::memory::PayloadType;
     use aravis_port_core::memory::new_buffer_pool;
 
     struct MockRequester {
@@ -489,6 +528,97 @@ mod tests {
 
         assert_eq!(closed.len(), 1);
         assert_eq!(closed[0].status, aravis_port_core::memory::BufferStatus::SizeMismatch);
+    }
+
+    fn multipart_leader_bytes(width: u32, height: u32) -> Vec<u8> {
+        let mut bytes = LeaderPayload {
+            flags: 0,
+            payload_type: PayloadKind::Multipart.to_u16(),
+            timestamp: 1,
+            image: None,
+        }
+        .encode();
+        bytes.extend_from_slice(
+            &aravis_port_core::gvsp::PartInfos {
+                data_type: 1,
+                length: (width * height) as u64,
+                source_id: 0,
+                additional_zones: 0,
+                zone_directions: 0,
+                data_purpose_id: 1,
+                region_id: 0,
+                image: ImageInfos {
+                    pixel_format: 0x0108_0001,
+                    width,
+                    height,
+                    x_offset: 0,
+                    y_offset: 0,
+                    x_padding: 0,
+                    y_padding: 0,
+                },
+            }
+            .encode(),
+        );
+        bytes
+    }
+
+    fn multipart_block(offset: u64, data: &[u8]) -> Vec<u8> {
+        MultipartBlock {
+            part_id: 0,
+            zone_info: 0,
+            offset,
+        }
+        .encode(data)
+    }
+
+    #[test]
+    fn multipart_blocks_are_placed_at_their_explicit_offsets() {
+        // Shaped like the live C6-2040-GigE's stream: a one-part multi-part payload whose data
+        // packets carry byte offsets instead of relying on the packet-id stride (which, with the
+        // 8-byte block prefix, differs from a generic payload packet's). Delivered out of order,
+        // with padding after the final block's real data.
+        let mut reassembler = Reassembler::new(StreamConfig::default());
+        let (_user, stream) = new_buffer_pool(2, 8);
+        let mut requester = MockRequester { requests: Vec::new() };
+        let now = Instant::now();
+
+        let leader = multipart_leader_bytes(4, 2);
+        reassembler.process_packet(GvspStatus::Success, header(1, ContentType::Leader, 0), &leader, &stream, &mut requester, now);
+        // The final block is padded past the 8-byte payload, as the C6 does at some packet sizes.
+        let second = multipart_block(4, b"BBBBpadding");
+        reassembler.process_packet(GvspStatus::Success, header(1, ContentType::Multipart, 2), &second, &stream, &mut requester, now);
+        let first = multipart_block(0, b"AAAA");
+        reassembler.process_packet(GvspStatus::Success, header(1, ContentType::Multipart, 1), &first, &stream, &mut requester, now);
+        let trailer = trailer_bytes();
+        let closed = reassembler.process_packet(GvspStatus::Success, header(1, ContentType::Trailer, 3), &trailer, &stream, &mut requester, now);
+
+        assert_eq!(closed.len(), 1);
+        assert_eq!(closed[0].status, aravis_port_core::memory::BufferStatus::Success);
+        assert_eq!(closed[0].payload_type, PayloadType::Multipart);
+        assert_eq!(closed[0].data(), b"AAAABBBB");
+        let image = closed[0].image.unwrap();
+        assert_eq!((image.width, image.height), (4, 2));
+    }
+
+    #[test]
+    fn a_multipart_block_past_the_buffer_fails_the_frame_instead_of_growing_it() {
+        let mut reassembler = Reassembler::new(StreamConfig::default());
+        let (_user, stream) = new_buffer_pool(2, 8);
+        let mut requester = MockRequester { requests: Vec::new() };
+        let now = Instant::now();
+
+        let leader = multipart_leader_bytes(4, 2);
+        reassembler.process_packet(GvspStatus::Success, header(1, ContentType::Leader, 0), &leader, &stream, &mut requester, now);
+        let rogue = multipart_block(0x0000_ffff_0000_0000, b"XXXX");
+        reassembler.process_packet(GvspStatus::Success, header(1, ContentType::Multipart, 1), &rogue, &stream, &mut requester, now);
+        let truncated = [0u8; 3];
+        reassembler.process_packet(GvspStatus::Success, header(1, ContentType::Multipart, 2), &truncated, &stream, &mut requester, now);
+        let trailer = trailer_bytes();
+        let closed = reassembler.process_packet(GvspStatus::Success, header(1, ContentType::Trailer, 3), &trailer, &stream, &mut requester, now);
+
+        assert_eq!(closed.len(), 1);
+        assert_eq!(closed[0].status, aravis_port_core::memory::BufferStatus::SizeMismatch);
+        assert!(closed[0].data().len() <= 8);
     }
 
     #[test]

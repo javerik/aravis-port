@@ -8,7 +8,7 @@ pub mod formula;
 pub mod node;
 pub mod tree;
 
-pub use access::{MemoryRegisterAccess, RegisterAccess};
+pub use access::{ChunkDataAccess, MemoryRegisterAccess, RegisterAccess};
 pub use error::{GenIcamError, Result};
 pub use node::NodeId;
-pub use tree::GenApiTree;
+pub use tree::{GenApiTree, RegisterDescription};

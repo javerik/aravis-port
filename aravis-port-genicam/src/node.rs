@@ -32,6 +32,17 @@ pub enum Cachable {
 pub enum AddressTerm {
     Literal(u64),
     PAddress(NodeId),
+    /// `<pIndex>`: adds `offset * value(index)` bytes.
+    Index { index: NodeId, offset: IndexOffset },
+}
+
+/// The per-step byte stride of a `<pIndex>` term: its `Offset`/`pOffset` attribute, or the
+/// register's own `Length` when it has neither (as in Aravis).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IndexOffset {
+    RegisterLength,
+    Literal(u64),
+    PNode(NodeId),
 }
 
 /// The register-level shape of an `IntReg`/`MaskedIntReg`/`FloatReg`/`StringReg` node: address
@@ -47,6 +58,9 @@ pub struct RegisterAccessSpec {
     pub cachable: Cachable,
     pub invalidators: Vec<NodeId>,
     pub writable: bool,
+    /// `Some(id)` when the register's `pPort` is a chunk port (a `<Port>` with a `<ChunkID>`):
+    /// its bytes come from chunk `id` of an acquired buffer rather than from device memory.
+    pub chunk_id: Option<u32>,
 }
 
 impl Default for RegisterAccessSpec {
@@ -60,6 +74,7 @@ impl Default for RegisterAccessSpec {
             cachable: Cachable::NoCache,
             invalidators: Vec::new(),
             writable: true,
+            chunk_id: None,
         }
     }
 }
@@ -103,6 +118,14 @@ pub struct EnumerationNode {
     pub value: ValueSource,
 }
 
+/// Where a `<String>` node gets its text from: a literal `<Value>`, or `<pValue>` delegating to
+/// another string node (typically a `StringReg`).
+#[derive(Debug, Clone)]
+pub enum StringSource {
+    Literal(String),
+    PValue(NodeId),
+}
+
 #[derive(Debug, Clone)]
 pub struct CommandNode {
     pub value: ValueSource,
@@ -142,6 +165,9 @@ pub enum Node {
     /// A register holding a NUL-terminated string (`<StringReg>`), addressed/cached exactly
     /// like `IntReg` but decoded as text rather than an integer.
     StringReg(RegisterAccessSpec),
+    /// A front-end string feature (`<String>`), confirmed necessary against the live
+    /// C6-2040-GigE (`EventLogMessageText`, `ValueArrayCandidates`).
+    String(StringSource),
     IntReg(RegisterAccessSpec),
     /// A register holding an IEEE-754 float bit pattern (`<FloatReg>`), 4 or 8 bytes.
     FloatReg(RegisterAccessSpec),
@@ -160,6 +186,7 @@ impl Node {
             Node::EnumEntry(_) => "EnumEntry",
             Node::Command(_) => "Command",
             Node::StringReg(_) => "StringReg",
+            Node::String(_) => "String",
             Node::IntReg(_) => "IntReg",
             Node::FloatReg(_) => "FloatReg",
             Node::Converter(_) => "Converter",

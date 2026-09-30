@@ -63,6 +63,17 @@ impl Camera {
         self.device.write(name, value)
     }
 
+    /// Read a chunk feature (e.g. `"ChunkFrameID"`) from a buffer acquired with chunk mode
+    /// active. See [`Device::read_chunk`].
+    pub fn read_chunk<T: FeatureValue>(&self, buffer: &Buffer, name: &str) -> Result<T> {
+        self.device.read_chunk(buffer, name)
+    }
+
+    /// Whether feature `name` is currently available. See [`Device::is_available`].
+    pub fn is_available(&self, name: &str) -> Result<bool> {
+        self.device.is_available(name)
+    }
+
     /// Execute a GenICam `Command` feature (e.g. `"AcquisitionStart"`).
     pub fn execute_command(&self, name: &str) -> Result<()> {
         self.device.execute_command(name)
@@ -121,13 +132,16 @@ impl Camera {
     /// setting the packet size any other way (e.g. `camera.write("GevSCPSPacketSize", ...)`)
     /// before calling a `start_stream*` method has no effect, since this overwrites it.
     fn open_stream(&self, cfg: StreamConfig) -> Result<(BufferPoolHandle, aravis_port_stream::StreamHandle)> {
-        let payload_size: i64 = self.device.read("PayloadSize")?;
         let local_ip = Self::local_route_to(self.ip)?;
         let socket = UdpSocket::bind((local_ip, 0)).map_err(Error::Io)?;
         let local_port = socket.local_addr().map_err(Error::Io)?.port();
 
         self.device.open_stream_channel(local_ip, local_port)?;
         self.device.set_stream_packet_size(cfg.packet_size)?;
+        // Only now, with the packet size programmed: some devices' PayloadSize depends on it
+        // (confirmed on the live C6-2040-GigE: 409848 bytes at 1000, 410072 at 1400), and a
+        // pool sized for another packet size is too small for every frame.
+        let payload_size: i64 = self.device.read("PayloadSize")?;
 
         let (pool_user, pool_stream) = new_buffer_pool(4, payload_size.max(0) as usize);
         let requester = Box::new(DeviceResendRequester {

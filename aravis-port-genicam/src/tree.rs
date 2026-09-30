@@ -6,9 +6,9 @@ use crate::dom::{self, XmlDom};
 use crate::error::{GenIcamError, Result};
 use crate::formula::{Formula, Value};
 use crate::node::{
-    AddressTerm, BooleanNode, Cachable, CategoryNode, CommandNode, ConverterNode, Endianness,
+    AddressTerm, BooleanNode, Cachable, IndexOffset, CategoryNode, CommandNode, ConverterNode, Endianness,
     EnumEntryNode, EnumerationNode, Node, NodeId, NumericNode, RegisterAccessSpec, Sign,
-    SwissKnifeNode, ValueSource,
+    StringSource, SwissKnifeNode, ValueSource,
 };
 
 struct CachedValue {
@@ -20,10 +20,40 @@ struct CachedValue {
 /// `SwissKnife`/`Converter`-shaped element.
 type VariablesConstantsSubExprs = (Vec<(String, NodeId)>, Vec<(String, String)>, Vec<(String, String)>);
 
+/// Identification attributes of the document's `<RegisterDescription>` root element.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RegisterDescription {
+    pub vendor_name: String,
+    pub model_name: String,
+    /// `(SchemaMajorVersion, SchemaMinorVersion, SchemaSubMinorVersion)`. Missing or unparsable
+    /// components are 0, as in Aravis, so a document without them counts as pre-1.1 schema.
+    pub schema_version: (u32, u32, u32),
+}
+
+impl RegisterDescription {
+    fn from_root(dom: &XmlDom) -> Self {
+        let root = dom.get(dom.root);
+        let attr = |name: &str| root.attrs.get(name).map(|v| v.trim().to_string()).unwrap_or_default();
+        let version = |name: &str| attr(name).parse::<u32>().unwrap_or(0);
+        Self {
+            vendor_name: attr("VendorName"),
+            model_name: attr("ModelName"),
+            schema_version: (
+                version("SchemaMajorVersion"),
+                version("SchemaMinorVersion"),
+                version("SchemaSubMinorVersion"),
+            ),
+        }
+    }
+}
+
 /// The parsed GenICam node tree plus register cache/invalidation state. Transport-agnostic:
 /// every method that touches the wire takes a `&mut impl RegisterAccess`.
 pub struct GenApiTree {
+    register_description: RegisterDescription,
     nodes: Vec<Node>,
+    /// `pIsImplemented`/`pIsAvailable` predicates per node, for [`GenApiTree::is_available`].
+    availability: HashMap<NodeId, Vec<NodeId>>,
     names: HashMap<String, NodeId>,
     cache: Vec<RefCell<Option<CachedValue>>>,
     epoch: Vec<Cell<u64>>,
@@ -40,6 +70,7 @@ const CONSTRUCTIBLE_TAGS: &[&str] = &[
     "EnumEntry",
     "Command",
     "StringReg",
+    "String",
     "IntReg",
     "MaskedIntReg",
     "FloatReg",
@@ -47,6 +78,11 @@ const CONSTRUCTIBLE_TAGS: &[&str] = &[
     "IntConverter",
     "SwissKnife",
     "IntSwissKnife",
+    // Each `<StructEntry>` is a named bit field of its enclosing `<StructReg>`, i.e. a
+    // `MaskedIntReg` that inherits the register elements (Address, Length, Endianess, ...) of its
+    // parent; confirmed necessary against the live C6-2040-GigE's `Scan3dCapabilities*Reg`
+    // entries. The `StructReg` itself is only a container and has no node of its own.
+    "StructEntry",
     // Out-of-scope node kinds (file access, GenICam events) that still need to *resolve* as
     // named references — confirmed necessary against the live camera's `FileAccessBuffer`
     // (a plain `<Register>`) and per-event `<Port>` nodes — even though we don't implement their
@@ -84,6 +120,10 @@ struct Builder<'a> {
     dom: &'a XmlDom,
     names: HashMap<String, NodeId>,
     dom_to_node: HashMap<usize, NodeId>,
+    /// `StructEntry` DOM index -> DOM index of its enclosing `StructReg`.
+    struct_parent: HashMap<usize, usize>,
+    /// `<Port>` name -> its `<ChunkID>`, for the ports that address chunk data.
+    chunk_ports: HashMap<String, u32>,
 }
 
 impl<'a> Builder<'a> {
@@ -122,25 +162,48 @@ impl<'a> Builder<'a> {
     }
 
     fn register_spec(&self, idx: usize) -> Result<RegisterAccessSpec> {
+        // A `StructEntry` takes every register element it doesn't set itself from its
+        // `StructReg`; for any other register node there is no parent to fall back to.
+        let parent = self.struct_parent.get(&idx).copied();
+        let child = |tag: &str| self.dom.child(idx, tag).or_else(|| parent.and_then(|p| self.dom.child(p, tag)));
+        let children = |tag: &str| {
+            let mut all = parent.map(|p| self.dom.children_with_tag(p, tag)).unwrap_or_default();
+            all.extend(self.dom.children_with_tag(idx, tag));
+            all
+        };
+
         let mut address_terms = Vec::new();
-        for a in self.dom.children_with_tag(idx, "Address") {
+        for a in children("Address") {
             address_terms.push(AddressTerm::Literal(parse_u64_literal(&self.dom.get(a).text)?));
         }
-        for a in self.dom.children_with_tag(idx, "pAddress") {
+        for a in children("pAddress") {
             address_terms.push(AddressTerm::PAddress(self.resolve(&self.dom.get(a).text)?));
         }
+        for i in children("pIndex") {
+            let el = self.dom.get(i);
+            let offset = match (el.attrs.get("Offset"), el.attrs.get("pOffset")) {
+                (Some(offset), _) => IndexOffset::Literal(parse_u64_literal(offset)?),
+                (None, Some(node)) => IndexOffset::PNode(self.resolve(node)?),
+                (None, None) => IndexOffset::RegisterLength,
+            };
+            address_terms.push(AddressTerm::Index {
+                index: self.resolve(&el.text)?,
+                offset,
+            });
+        }
+        let chunk_id = child("pPort").and_then(|p| self.chunk_ports.get(self.dom.get(p).text.trim()).copied());
 
-        let length = match self.dom.child(idx, "Length") {
+        let length = match child("Length") {
             Some(c) => parse_u64_literal(&self.dom.get(c).text)? as u32,
             None => 4,
         };
 
-        let endianness = match self.dom.child(idx, "Endianess").map(|c| self.dom.get(c).text.trim().to_string()) {
+        let endianness = match child("Endianess").map(|c| self.dom.get(c).text.trim().to_string()) {
             Some(s) if s.eq_ignore_ascii_case("LittleEndian") => Endianness::Little,
             _ => Endianness::Big,
         };
 
-        let sign = match self.dom.child(idx, "Sign").map(|c| self.dom.get(c).text.trim().to_string()) {
+        let sign = match child("Sign").map(|c| self.dom.get(c).text.trim().to_string()) {
             Some(s) if s.eq_ignore_ascii_case("Signed") => Sign::Signed,
             _ => Sign::Unsigned,
         };
@@ -155,13 +218,13 @@ impl<'a> Builder<'a> {
         // case for BigEndian fields) underflows the `msb - lsb` width computation in
         // `node::decode_int`/`encode_int`.
         let reverse_bit = |xml_bit: u8| -> u8 { (8 * length - 1).saturating_sub(xml_bit as u32) as u8 };
-        let bit_mask = if let Some(bit) = self.dom.child(idx, "Bit") {
+        let bit_mask = if let Some(bit) = child("Bit") {
             let n = parse_u64_literal(&self.dom.get(bit).text)? as u8;
             let n = if endianness == Endianness::Big { reverse_bit(n) } else { n };
             Some((n, n))
         } else {
-            let lsb = self.dom.child(idx, "LSB").map(|c| parse_u64_literal(&self.dom.get(c).text)).transpose()?;
-            let msb = self.dom.child(idx, "MSB").map(|c| parse_u64_literal(&self.dom.get(c).text)).transpose()?;
+            let lsb = child("LSB").map(|c| parse_u64_literal(&self.dom.get(c).text)).transpose()?;
+            let msb = child("MSB").map(|c| parse_u64_literal(&self.dom.get(c).text)).transpose()?;
             match (lsb, msb) {
                 (Some(l), Some(m)) => {
                     let (l, m) = (l as u8, m as u8);
@@ -175,20 +238,31 @@ impl<'a> Builder<'a> {
             }
         };
 
-        let cachable = match self.dom.child(idx, "Cachable").map(|c| self.dom.get(c).text.trim().to_string()) {
+        let cachable = match child("Cachable").map(|c| self.dom.get(c).text.trim().to_string()) {
             Some(s) if s.eq_ignore_ascii_case("WriteThrough") => Cachable::WriteThrough,
             Some(s) if s.eq_ignore_ascii_case("WriteAround") => Cachable::WriteAround,
             _ => Cachable::NoCache,
         };
 
         let writable = !matches!(
-            self.dom.child(idx, "AccessMode").map(|c| self.dom.get(c).text.trim().to_string()),
+            child("AccessMode").map(|c| self.dom.get(c).text.trim().to_string()),
             Some(ref s) if s.eq_ignore_ascii_case("RO")
         );
 
         let mut invalidators = Vec::new();
-        for inv in self.dom.children_with_tag(idx, "pInvalidator") {
+        for inv in children("pInvalidator") {
             invalidators.push(self.resolve(&self.dom.get(inv).text)?);
+        }
+        // Sibling entries share one register, so a write through any of them must invalidate
+        // the cached bytes of all the others.
+        if let Some(p) = parent {
+            for sibling in self.dom.children_with_tag(p, "StructEntry") {
+                if sibling != idx {
+                    if let Some(&id) = self.dom_to_node.get(&sibling) {
+                        invalidators.push(id);
+                    }
+                }
+            }
         }
 
         Ok(RegisterAccessSpec {
@@ -200,7 +274,19 @@ impl<'a> Builder<'a> {
             cachable,
             invalidators,
             writable,
+            chunk_id,
         })
+    }
+
+    /// The `pIsImplemented`/`pIsAvailable` predicates of the element at `idx`.
+    fn availability(&self, idx: usize) -> Result<Vec<NodeId>> {
+        let mut predicates = Vec::new();
+        for tag in ["pIsImplemented", "pIsAvailable"] {
+            for p in self.dom.children_with_tag(idx, tag) {
+                predicates.push(self.resolve(&self.dom.get(p).text)?);
+            }
+        }
+        Ok(predicates)
     }
 
     fn variables_constants_subexprs(&self, idx: usize) -> Result<VariablesConstantsSubExprs> {
@@ -337,7 +423,13 @@ impl<'a> Builder<'a> {
             "EnumEntry" => Node::EnumEntry(self.build_enum_entry(idx)?),
             "Command" => Node::Command(self.build_command(idx)?),
             "StringReg" => Node::StringReg(self.register_spec(idx)?),
-            "IntReg" | "MaskedIntReg" => Node::IntReg(self.register_spec(idx)?),
+            "String" => Node::String(match self.resolve_child_ref(idx, "pValue")? {
+                Some(target) => StringSource::PValue(target),
+                None => StringSource::Literal(
+                    self.dom.child(idx, "Value").map(|v| self.dom.get(v).text.clone()).unwrap_or_default(),
+                ),
+            }),
+            "IntReg" | "MaskedIntReg" | "StructEntry" => Node::IntReg(self.register_spec(idx)?),
             "FloatReg" => Node::FloatReg(self.register_spec(idx)?),
             "Converter" => Node::Converter(self.build_converter(idx, false)?),
             "IntConverter" => Node::Converter(self.build_converter(idx, true)?),
@@ -364,8 +456,31 @@ impl GenApiTree {
         let mut nodes = Vec::new();
         let mut names = HashMap::new();
         let mut dom_to_node = HashMap::new();
+        let mut struct_parent = HashMap::new();
+        let mut chunk_ports = HashMap::new();
         for (idx, el) in dom.elements.iter().enumerate() {
+            if el.tag == "Port" {
+                if let (Some(name), Some(c)) = (el.attrs.get("Name"), dom.child(idx, "ChunkID")) {
+                    // ChunkID is hexadecimal, with or without a 0x prefix.
+                    let text = dom.get(c).text.trim();
+                    let hex = text.strip_prefix("0x").or_else(|| text.strip_prefix("0X")).unwrap_or(text);
+                    let id = u32::from_str_radix(hex, 16)
+                        .map_err(|_| GenIcamError::Xml(format!("invalid ChunkID '{text}' on port '{name}'")))?;
+                    chunk_ports.insert(name.clone(), id);
+                }
+            }
+            // A `StructReg` always precedes its entries in document order, so every entry's
+            // parent is known by the time the loop reaches it.
+            if el.tag == "StructReg" {
+                for entry in dom.children_with_tag(idx, "StructEntry") {
+                    struct_parent.insert(entry, idx);
+                }
+            }
             if !CONSTRUCTIBLE_TAGS.contains(&el.tag.as_str()) {
+                continue;
+            }
+            // A `StructEntry` outside a `StructReg` has no register to address.
+            if el.tag == "StructEntry" && !struct_parent.contains_key(&idx) {
                 continue;
             }
             let id = NodeId(nodes.len() as u32);
@@ -383,25 +498,53 @@ impl GenApiTree {
             dom: &dom,
             names,
             dom_to_node,
+            struct_parent,
+            chunk_ports,
         };
 
         // Pass 2: construct the real node value for every reserved slot, now that all names are
         // known. `Builder::build_node` only reads `dom`/`names`/`dom_to_node`, never
         // `builder.nodes` — that field exists solely to size `built_nodes` below.
         let mut built_nodes: Vec<Node> = (0..n).map(|_| Node::Category(CategoryNode::default())).collect();
+        let mut availability = HashMap::new();
         for (&idx, &id) in &builder.dom_to_node {
             built_nodes[id.index()] = builder.build_node(idx)?;
+            let predicates = builder.availability(idx)?;
+            if !predicates.is_empty() {
+                availability.insert(id, predicates);
+            }
         }
 
         let n = built_nodes.len();
         Ok(Self {
+            register_description: RegisterDescription::from_root(&dom),
             nodes: built_nodes,
+            availability,
             names: builder.names,
             cache: (0..n).map(|_| RefCell::new(None)).collect(),
             epoch: (0..n).map(|_| Cell::new(0)).collect(),
             global_tick: Cell::new(0),
             caching_enabled: Cell::new(true),
         })
+    }
+
+    /// The document's `<RegisterDescription>` attributes (vendor, model, schema version).
+    pub fn register_description(&self) -> &RegisterDescription {
+        &self.register_description
+    }
+
+    /// Whether `name` is currently implemented and available, i.e. all of its
+    /// `pIsImplemented`/`pIsAvailable` predicates evaluate non-zero (a feature without any is
+    /// always available). Tools such as GenICam browsers show unavailable features as "-".
+    /// Evaluating a predicate may read device registers.
+    pub fn is_available(&self, io: &mut impl RegisterAccess, name: &str) -> Result<bool> {
+        let id = self.node_id(name)?;
+        for &predicate in self.availability.get(&id).into_iter().flatten() {
+            if self.eval_node(io, predicate, name)?.as_i64() == 0 {
+                return Ok(false);
+            }
+        }
+        Ok(true)
     }
 
     pub fn node_id(&self, name: &str) -> Result<NodeId> {
@@ -432,6 +575,14 @@ impl GenApiTree {
         }
     }
 
+    /// Drop every cached register value. For callers that change device state behind the
+    /// tree's back (raw register writes), which its invalidator tracking cannot see.
+    pub fn invalidate_cache(&self) {
+        for entry in &self.cache {
+            *entry.borrow_mut() = None;
+        }
+    }
+
     pub fn set_caching_enabled(&self, enabled: bool) {
         self.caching_enabled.set(enabled);
     }
@@ -449,6 +600,14 @@ impl GenApiTree {
         spec: &RegisterAccessSpec,
         context_name: &str,
     ) -> Result<Vec<u8>> {
+        // Chunk registers describe the buffer being inspected, never the device, so they are
+        // neither cached nor read from device memory.
+        if let Some(chunk_id) = spec.chunk_id {
+            let address = self.resolve_address(io, spec, context_name)?;
+            return io
+                .read_chunk(chunk_id, address, spec.length as usize)
+                .map_err(|e| GenIcamError::Io(e.to_string()));
+        }
         if spec.cachable != Cachable::NoCache && self.caching_enabled.get() {
             let cached = self.cache[id.index()].borrow();
             if let Some(c) = cached.as_ref() {
@@ -482,7 +641,7 @@ impl GenApiTree {
         new_bytes: Vec<u8>,
         context_name: &str,
     ) -> Result<()> {
-        if !spec.writable {
+        if !spec.writable || spec.chunk_id.is_some() {
             return Err(GenIcamError::NotWritable(context_name.to_string()));
         }
         let address = self.resolve_address(io, spec, context_name)?;
@@ -502,10 +661,21 @@ impl GenApiTree {
     fn resolve_address(&self, io: &mut impl RegisterAccess, spec: &RegisterAccessSpec, context_name: &str) -> Result<u64> {
         let mut addr = 0u64;
         for term in &spec.address_terms {
-            addr += match term {
+            // Wrapping: terms come from device values and formulas, and a bogus one must yield a
+            // bad address (which the device rejects), not an overflow panic.
+            addr = addr.wrapping_add(match term {
                 AddressTerm::Literal(v) => *v,
                 AddressTerm::PAddress(target) => self.eval_node(io, *target, context_name)?.as_i64() as u64,
-            };
+                AddressTerm::Index { index, offset } => {
+                    let stride = match offset {
+                        IndexOffset::RegisterLength => spec.length as i64,
+                        IndexOffset::Literal(v) => *v as i64,
+                        IndexOffset::PNode(node) => self.eval_node(io, *node, context_name)?.as_i64(),
+                    };
+                    let index = self.eval_node(io, *index, context_name)?.as_i64();
+                    stride.wrapping_mul(index) as u64
+                }
+            });
         }
         Ok(addr)
     }
@@ -545,7 +715,7 @@ impl GenApiTree {
                 let result = self.eval_swiss_knife(io, sk, context_name)?;
                 Ok(if sk.is_integer { Value::Int(result.as_i64()) } else { result })
             }
-            other @ (Node::StringReg(_) | Node::Category(_)) => Err(GenIcamError::TypeMismatch {
+            other @ (Node::StringReg(_) | Node::String(_) | Node::Category(_)) => Err(GenIcamError::TypeMismatch {
                 name: context_name.to_string(),
                 expected: "numeric node",
                 found: other.kind_name(),
@@ -574,7 +744,12 @@ impl GenApiTree {
                 self.write_register_bytes(io, id, &spec, new_bytes, context_name)
             }
             Node::Converter(conv) => self.eval_converter_write(io, &conv, value, context_name),
-            Node::SwissKnife(_) | Node::EnumEntry(_) | Node::Category(_) | Node::Command(_) | Node::StringReg(_) => {
+            Node::SwissKnife(_)
+            | Node::EnumEntry(_)
+            | Node::Category(_)
+            | Node::Command(_)
+            | Node::StringReg(_)
+            | Node::String(_) => {
                 Err(GenIcamError::NotWritable(context_name.to_string()))
             }
         };
@@ -650,35 +825,50 @@ impl GenApiTree {
         self.set_integer(io, name, if value { 1 } else { 0 })
     }
 
-    pub fn get_string(&self, io: &mut impl RegisterAccess, name: &str) -> Result<String> {
-        let id = self.node_id(name)?;
+    fn read_string_node(&self, io: &mut impl RegisterAccess, id: NodeId, context_name: &str) -> Result<String> {
         match &self.nodes[id.index()] {
-            Node::StringReg(spec) => self.read_string_register(io, id, spec, name),
+            Node::StringReg(spec) => self.read_string_register(io, id, spec, context_name),
+            Node::String(StringSource::Literal(text)) => Ok(text.clone()),
+            Node::String(StringSource::PValue(target)) => self.read_string_node(io, *target, context_name),
             other => Err(GenIcamError::TypeMismatch {
-                name: name.to_string(),
+                name: context_name.to_string(),
                 expected: "StringReg",
                 found: other.kind_name(),
             }),
         }
     }
 
+    fn write_string_node(&self, io: &mut impl RegisterAccess, id: NodeId, value: &str, context_name: &str) -> Result<()> {
+        match &self.nodes[id.index()] {
+            Node::StringReg(spec) => {
+                let mut bytes = vec![0u8; spec.length as usize];
+                let src = value.as_bytes();
+                let n = src.len().min(bytes.len());
+                bytes[..n].copy_from_slice(&src[..n]);
+                self.write_register_bytes(io, id, spec, bytes, context_name)
+            }
+            Node::String(StringSource::Literal(_)) => Err(GenIcamError::NotWritable(context_name.to_string())),
+            Node::String(StringSource::PValue(target)) => {
+                self.write_string_node(io, *target, value, context_name)?;
+                self.bump_epoch(id);
+                Ok(())
+            }
+            other => Err(GenIcamError::TypeMismatch {
+                name: context_name.to_string(),
+                expected: "StringReg",
+                found: other.kind_name(),
+            }),
+        }
+    }
+
+    pub fn get_string(&self, io: &mut impl RegisterAccess, name: &str) -> Result<String> {
+        let id = self.node_id(name)?;
+        self.read_string_node(io, id, name)
+    }
+
     pub fn set_string(&self, io: &mut impl RegisterAccess, name: &str, value: &str) -> Result<()> {
         let id = self.node_id(name)?;
-        let spec = match &self.nodes[id.index()] {
-            Node::StringReg(spec) => spec.clone(),
-            other => {
-                return Err(GenIcamError::TypeMismatch {
-                    name: name.to_string(),
-                    expected: "StringReg",
-                    found: other.kind_name(),
-                })
-            }
-        };
-        let mut bytes = vec![0u8; spec.length as usize];
-        let src = value.as_bytes();
-        let n = src.len().min(bytes.len());
-        bytes[..n].copy_from_slice(&src[..n]);
-        self.write_register_bytes(io, id, &spec, bytes, name)
+        self.write_string_node(io, id, value, name)
     }
 
     pub fn get_enum_symbolic(&self, io: &mut impl RegisterAccess, name: &str) -> Result<String> {

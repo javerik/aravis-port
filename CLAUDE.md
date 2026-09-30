@@ -15,9 +15,12 @@ cargo clippy --workspace --all-targets -- -D warnings  # must be clean
 cargo test -p aravis-port-genicam                      # one crate
 cargo test -p aravis-port --test integration           # one integration-test file
 cargo test -p aravis-port-stream --test resend_under_loss <test_name>   # a single test
+cargo test -p aravis-port --test live_cam_integration_tests -- --serial <SN>  # LiveCamIntegrationTests against a real camera; skipped without --serial
 ```
 
 The live-hardware examples (`live_check*`, `discover`) under `aravis-port-device/examples/` and `aravis-port/examples/` need a real camera on the network and are not part of `cargo test`. Run one with `cargo run -p <crate> --example <name> -- <camera-ip>`. The header comment of each file lists its arguments.
+
+`aravis-port/tests/live_cam_integration_tests.rs` (`LiveCamIntegrationTests`) is the asserting counterpart. It uses its own std-only runner (`harness = false`) so it can accept `--serial <SN>`. Tests run sequentially, each on a freshly connected `Camera`, and each must restore any feature it writes before returning its result.
 
 ## Hard constraints
 
@@ -39,9 +42,14 @@ Six crates, layered bottom-up:
 
 ### Subtleties learned from real hardware (don't "simplify" these away)
 
-These were validated against an AT-Automation Technology C5-2040-GigE, and the code comments explain each one:
+These were validated against AT-Automation Technology C5-2040-GigE and C6-2040-GigE cameras, and the code comments explain each one:
 
 - `GevSCPSPacketSize` counts IP and UDP headers too, so the per-packet payload is `packet_size - 20 - 8 - 8(status+std header)`. See `per_packet_capacity` in `stream/src/reassembly.rs`.
 - The default stream packet size is 1400 because some devices' power-on default is above the 1500-byte MTU once headers are added.
 - The discovery timeout applies per bind address.
 - Frame-id late-frame detection is a simple distance check and doesn't handle 16-bit wraparound. This is a documented limitation.
+- Some devices need GenICam 1.0 "legacy" register access: 4-byte feature accesses go through READREG/WRITEREG instead of READMEM/WRITEMEM. This applies when the XML schema is < 1.1.0, and to devices on Aravis's quirk list even when they declare a newer schema (the C6 does). See `uses_legacy_register_access` in `device/src/io.rs`.
+- The C6 streams GVSP multi-part payloads (content type 7). Each data block carries an explicit byte offset, and the final block can be padded past `PayloadSize`, so the reassembler clips it rather than rejecting it. See `ContentType::Multipart` in `stream/src/reassembly.rs`.
+- The C6's `PayloadSize` depends on `GevSCPSPacketSize`, and `PayloadSizeReg` is cached without that register as an invalidator. So `Camera::open_stream` programs the packet size *before* reading `PayloadSize`, and raw `Device::write_register`/`write_memory` drop the GenICam cache.
+- Chunk data: in chunk mode the device wraps the image itself as the first chunk, so the whole payload is a `[data][id][size]` chain that `ChunkTlvIndex` walks from the end. Chunk features are registers behind a `<Port>` with a `<ChunkID>`, usually indexed by a selector through `pIndex`. Read them with `Device::read_chunk`/`Camera::read_chunk` (genicam `ChunkDataAccess`).
+- `Device::connect` must release control-channel privilege when it fails after acquiring it (e.g. a GenICam parse error). Otherwise the camera refuses every client until its heartbeat timeout expires.

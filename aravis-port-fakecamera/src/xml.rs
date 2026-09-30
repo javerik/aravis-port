@@ -8,7 +8,7 @@ use crate::registers::feature;
 pub fn minimal_genicam_xml() -> Vec<u8> {
     format!(
         r#"<?xml version="1.0" encoding="utf-8"?>
-<RegisterDescription xmlns="http://www.genicam.org/GenApi/Version_1_1" ModelName="FakeCamera" VendorName="aravis-port">
+<RegisterDescription xmlns="http://www.genicam.org/GenApi/Version_1_1" ModelName="FakeCamera" VendorName="aravis-port" SchemaMajorVersion="1" SchemaMinorVersion="1" SchemaSubMinorVersion="0">
   <Category Name="Root">
     <pFeature>Width</pFeature>
     <pFeature>Height</pFeature>
@@ -114,10 +114,27 @@ pub fn minimal_genicam_xml() -> Vec<u8> {
     <pValue>ChunkModeActiveReg</pValue>
   </Boolean>
 
+  <Port Name="ChunkPortFrameID">
+    <ChunkID>{chunk_id_frame_id:x}</ChunkID>
+  </Port>
+  <IntReg Name="ChunkFrameIDReg">
+    <Address>0</Address>
+    <Length>4</Length>
+    <AccessMode>RO</AccessMode>
+    <pPort>ChunkPortFrameID</pPort>
+    <Sign>Unsigned</Sign>
+    <Endianess>BigEndian</Endianess>
+  </IntReg>
+  <Integer Name="ChunkFrameID">
+    <pIsAvailable>ChunkModeActiveReg</pIsAvailable>
+    <pValue>ChunkFrameIDReg</pValue>
+  </Integer>
+
   <IntSwissKnife Name="PayloadSize">
     <pVariable Name="W">Width</pVariable>
     <pVariable Name="H">Height</pVariable>
-    <Formula>W * H</Formula>
+    <pVariable Name="C">ChunkModeActiveReg</pVariable>
+    <Formula>W * H + (C ? {chunk_extra_bytes} : 0)</Formula>
   </IntSwissKnife>
 </RegisterDescription>
 "#,
@@ -128,6 +145,8 @@ pub fn minimal_genicam_xml() -> Vec<u8> {
         gain_addr = feature::GAIN_RAW,
         acquisition_addr = feature::ACQUISITION_ACTIVE,
         chunk_mode_addr = feature::CHUNK_MODE_ACTIVE,
+        chunk_id_frame_id = crate::gvsp_server::CHUNK_ID_FRAME_ID,
+        chunk_extra_bytes = crate::gvsp_server::CHUNK_MODE_EXTRA_BYTES,
     )
     .into_bytes()
 }

@@ -173,8 +173,9 @@ fn camera_start_stream_recovers_frames_despite_packet_loss() {
     assert!(successes as f64 / total as f64 >= 0.7, "{successes}/{total} succeeded under 15% loss");
 }
 
-/// Scenario 5 — Chunk data: enable chunk mode, verify the appended chunk survives streaming and
-/// `ChunkTlvIndex` can extract it, matching the actual frame id.
+/// Scenario 5 — Chunk data: enable chunk mode, verify the appended chunk survives streaming, that
+/// `ChunkTlvIndex` can extract it from the whole payload, and that the GenICam `ChunkFrameID`
+/// feature reads the same value, matching the actual frame id.
 #[test]
 fn chunk_data_round_trips_through_streaming() {
     let camera = fake_camera(FakeCameraConfig {
@@ -198,14 +199,50 @@ fn chunk_data_round_trips_through_streaming() {
     cam.stop_stream(stream).unwrap();
 
     assert_eq!(buf.status, BufferStatus::Success);
-    let image_size = 16 * 16;
-    let chunk_region = &buf.data()[image_size..];
-    let index = ChunkTlvIndex::build(chunk_region).unwrap();
+    let payload = buf.data();
+    assert_eq!(payload.len() as i64, cam.read::<i64>("PayloadSize").unwrap());
+    let index = ChunkTlvIndex::build(payload).unwrap();
+    let image = index
+        .get(payload, aravis_port_fakecamera::CHUNK_ID_IMAGE)
+        .expect("expected the image chunk");
+    assert_eq!(image.len(), 16 * 16);
     let chunk_bytes = index
-        .get(chunk_region, aravis_port_fakecamera::CHUNK_ID_FRAME_ID)
+        .get(payload, aravis_port_fakecamera::CHUNK_ID_FRAME_ID)
         .expect("expected a FrameID chunk");
     let chunk_frame_id = u32::from_be_bytes(chunk_bytes.try_into().unwrap());
     assert_eq!(chunk_frame_id as u64, buf.frame_id);
+
+    assert!(cam.is_available("ChunkFrameID").unwrap());
+    assert_eq!(cam.read_chunk::<i64>(&buf, "ChunkFrameID").unwrap() as u64, buf.frame_id);
+    // Plain device reads can't see chunk data.
+    assert!(cam.read::<i64>("ChunkFrameID").is_err());
+}
+
+/// Chunk features are unavailable while chunk mode is off, and a buffer acquired without chunk
+/// data has nothing for them to read.
+#[test]
+fn chunk_features_are_unavailable_without_chunk_mode() {
+    let camera = fake_camera(FakeCameraConfig {
+        frame_period: Duration::from_millis(15),
+        ..Default::default()
+    });
+    camera.poke_register(feature::WIDTH, 16);
+    camera.poke_register(feature::HEIGHT, 16);
+    camera.poke_register(feature::ACQUISITION_ACTIVE, 1);
+
+    let cam = Camera::connect_addr(camera.local_addr()).unwrap();
+    assert!(!cam.is_available("ChunkFrameID").unwrap());
+    let (tx, rx) = std::sync::mpsc::channel();
+    let stream = cam
+        .start_stream(move |buffer: Buffer| {
+            let _ = tx.send(buffer);
+        })
+        .unwrap();
+    let buf = rx.recv_timeout(Duration::from_secs(3)).expect("expected a frame");
+    cam.stop_stream(stream).unwrap();
+
+    assert_eq!(buf.data().len(), 16 * 16);
+    assert!(cam.read_chunk::<i64>(&buf, "ChunkFrameID").is_err());
 }
 
 /// Scenario 6 — Heartbeat loss / control reacquisition: a device that stops heartbeating loses
