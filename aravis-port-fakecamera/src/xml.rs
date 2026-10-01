@@ -4,6 +4,8 @@
 //! `aravis-port-device` integration tests ahead of the full GenICam engine (Phase 3). The
 //! frame-rate, trigger and reverse features mirror the C6-2040-GigE's bounds/lock shapes
 //! (`pMax`, `Unit`, `pIsLocked`) for `GenApiTree::feature_info`; the fake only stores them.
+//! The region (`OffsetX`/`OffsetY` against `WidthMax`/`HeightMax`) follows the SFNC shape, with
+//! each size's max shrinking by its offset and the other way round.
 
 use crate::registers::feature;
 
@@ -25,6 +27,10 @@ pub fn minimal_genicam_xml() -> Vec<u8> {
     <pFeature>AcquisitionFrameRate</pFeature>
     <pFeature>TriggerSoftware</pFeature>
     <pFeature>ReverseX</pFeature>
+    <pFeature>OffsetX</pFeature>
+    <pFeature>OffsetY</pFeature>
+    <pFeature>WidthMax</pFeature>
+    <pFeature>HeightMax</pFeature>
   </Category>
 
   <Integer Name="TLParamsLocked">
@@ -42,7 +48,7 @@ pub fn minimal_genicam_xml() -> Vec<u8> {
   <Integer Name="Width">
     <pValue>WidthReg</pValue>
     <Min>1</Min>
-    <Max>4096</Max>
+    <pMax>WidthAvailable</pMax>
   </Integer>
 
   <IntReg Name="HeightReg">
@@ -55,7 +61,63 @@ pub fn minimal_genicam_xml() -> Vec<u8> {
   <Integer Name="Height">
     <pValue>HeightReg</pValue>
     <Min>1</Min>
-    <Max>4096</Max>
+    <pMax>HeightAvailable</pMax>
+  </Integer>
+
+  <Integer Name="WidthMax">
+    <ImposedAccessMode>RO</ImposedAccessMode>
+    <Value>4096</Value>
+  </Integer>
+  <Integer Name="HeightMax">
+    <ImposedAccessMode>RO</ImposedAccessMode>
+    <Value>4096</Value>
+  </Integer>
+  <IntSwissKnife Name="WidthAvailable">
+    <pVariable Name="M">WidthMax</pVariable>
+    <pVariable Name="O">OffsetXReg</pVariable>
+    <Formula>M - O</Formula>
+  </IntSwissKnife>
+  <IntSwissKnife Name="HeightAvailable">
+    <pVariable Name="M">HeightMax</pVariable>
+    <pVariable Name="O">OffsetYReg</pVariable>
+    <Formula>M - O</Formula>
+  </IntSwissKnife>
+  <IntSwissKnife Name="OffsetXAvailable">
+    <pVariable Name="M">WidthMax</pVariable>
+    <pVariable Name="W">WidthReg</pVariable>
+    <Formula>M - W</Formula>
+  </IntSwissKnife>
+  <IntSwissKnife Name="OffsetYAvailable">
+    <pVariable Name="M">HeightMax</pVariable>
+    <pVariable Name="H">HeightReg</pVariable>
+    <Formula>M - H</Formula>
+  </IntSwissKnife>
+
+  <IntReg Name="OffsetXReg">
+    <Address>0x{offset_x_addr:x}</Address>
+    <Length>4</Length>
+    <AccessMode>RW</AccessMode>
+    <Sign>Unsigned</Sign>
+    <Endianess>BigEndian</Endianess>
+  </IntReg>
+  <Integer Name="OffsetX">
+    <pValue>OffsetXReg</pValue>
+    <Min>0</Min>
+    <pMax>OffsetXAvailable</pMax>
+    <Inc>2</Inc>
+  </Integer>
+  <IntReg Name="OffsetYReg">
+    <Address>0x{offset_y_addr:x}</Address>
+    <Length>4</Length>
+    <AccessMode>RW</AccessMode>
+    <Sign>Unsigned</Sign>
+    <Endianess>BigEndian</Endianess>
+  </IntReg>
+  <Integer Name="OffsetY">
+    <pValue>OffsetYReg</pValue>
+    <Min>0</Min>
+    <pMax>OffsetYAvailable</pMax>
+    <Inc>2</Inc>
   </Integer>
 
   <IntReg Name="PixelFormatReg">
@@ -221,6 +283,8 @@ pub fn minimal_genicam_xml() -> Vec<u8> {
         frame_rate_addr = feature::FRAME_RATE,
         trigger_software_addr = feature::TRIGGER_SOFTWARE,
         reverse_x_addr = feature::REVERSE_X,
+        offset_x_addr = feature::OFFSET_X,
+        offset_y_addr = feature::OFFSET_Y,
         chunk_id_frame_id = crate::gvsp_server::CHUNK_ID_FRAME_ID,
         chunk_extra_bytes = crate::gvsp_server::CHUNK_MODE_EXTRA_BYTES,
     )
@@ -248,6 +312,10 @@ mod tests {
             "AcquisitionFrameRate",
             "TriggerSoftware",
             "ReverseX",
+            "OffsetX",
+            "OffsetY",
+            "WidthMax",
+            "HeightMax",
         ] {
             assert!(xml.contains(&format!("Name=\"{name}\"")), "missing feature {name}");
         }

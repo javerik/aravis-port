@@ -24,6 +24,10 @@ pub mod feature {
     pub const TRIGGER_SOFTWARE: u32 = 0x124;
     /// `ReverseX` (0/1). Only stored.
     pub const REVERSE_X: u32 = 0x128;
+    /// `OffsetX`/`OffsetY`: where the region sits on the sensor. Only stored: the pattern is
+    /// generated for the region's size alone.
+    pub const OFFSET_X: u32 = 0x12c;
+    pub const OFFSET_Y: u32 = 0x130;
 }
 
 /// PixelFormat register values understood by the built-in fake-camera GenICam XML.
@@ -87,6 +91,8 @@ impl RegisterBank {
         write_u32(&mut registers, feature::FRAME_RATE, 30.0f32.to_bits());
         write_u32(&mut registers, feature::TRIGGER_SOFTWARE, 0);
         write_u32(&mut registers, feature::REVERSE_X, 0);
+        write_u32(&mut registers, feature::OFFSET_X, 0);
+        write_u32(&mut registers, feature::OFFSET_Y, 0);
 
         Self { registers, xml }
     }
