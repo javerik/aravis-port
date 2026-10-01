@@ -14,6 +14,10 @@ use crate::node::{
 struct CachedValue {
     bytes: Vec<u8>,
     filled_at: u64,
+    /// The address the bytes were read from or written to. A register whose address follows
+    /// a selector (`pIndex`/`pAddress`) moves when the selector changes, and documents rarely
+    /// list the selector as a `pInvalidator`, so a cached value is only valid at this address.
+    address: u64,
 }
 
 /// `(pVariable bindings, Constant name->text, Expression name->text)` collected from a
@@ -608,19 +612,20 @@ impl GenApiTree {
                 .read_chunk(chunk_id, address, spec.length as usize)
                 .map_err(|e| GenIcamError::Io(e.to_string()));
         }
+        let address = self.resolve_address(io, spec, context_name)?;
         if spec.cachable != Cachable::NoCache && self.caching_enabled.get() {
             let cached = self.cache[id.index()].borrow();
             if let Some(c) = cached.as_ref() {
-                let valid = spec
-                    .invalidators
-                    .iter()
-                    .all(|inv| self.epoch[inv.index()].get() <= c.filled_at);
+                let valid = c.address == address
+                    && spec
+                        .invalidators
+                        .iter()
+                        .all(|inv| self.epoch[inv.index()].get() <= c.filled_at);
                 if valid {
                     return Ok(c.bytes.clone());
                 }
             }
         }
-        let address = self.resolve_address(io, spec, context_name)?;
         let bytes = io
             .read_memory(address, spec.length as usize)
             .map_err(|e| GenIcamError::Io(e.to_string()))?;
@@ -628,6 +633,7 @@ impl GenApiTree {
             *self.cache[id.index()].borrow_mut() = Some(CachedValue {
                 bytes: bytes.clone(),
                 filled_at: self.global_tick.get(),
+                address,
             });
         }
         Ok(bytes)
@@ -651,6 +657,7 @@ impl GenApiTree {
             Some(CachedValue {
                 bytes: new_bytes,
                 filled_at: self.global_tick.get(),
+                address,
             })
         } else {
             None

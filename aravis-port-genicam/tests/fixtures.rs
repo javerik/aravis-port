@@ -390,3 +390,44 @@ fn invalidate_cache_forces_a_fresh_device_read() {
     tree.invalidate_cache();
     assert_eq!(tree.get_integer(&mut io, "PayloadSizeReg").unwrap(), 200);
 }
+
+#[test]
+fn a_cached_selector_indexed_register_is_reread_when_the_selector_moves_it() {
+    // `GainReg`'s address follows `GainSelector` through `pIndex`, and like many real documents
+    // it declares no `pInvalidator` for it. The cached bytes belong to the old address, so they
+    // must not be served once the selector points elsewhere.
+    let xml = r#"<RegisterDescription>
+      <Enumeration Name="GainSelector">
+        <EnumEntry Name="All"><Value>0</Value></EnumEntry>
+        <EnumEntry Name="Red"><Value>1</Value></EnumEntry>
+        <pValue>GainSelectorReg</pValue>
+        <pSelected>Gain</pSelected>
+      </Enumeration>
+      <IntReg Name="GainSelectorReg">
+        <Address>0x0</Address><Length>4</Length><Endianess>BigEndian</Endianess>
+        <Cachable>WriteThrough</Cachable>
+      </IntReg>
+      <IntReg Name="GainReg">
+        <Address>0x10</Address>
+        <pIndex Offset="4">GainSelector</pIndex>
+        <Length>4</Length><Endianess>BigEndian</Endianess>
+        <Cachable>WriteThrough</Cachable>
+      </IntReg>
+      <Integer Name="Gain"><pValue>GainReg</pValue></Integer>
+    </RegisterDescription>"#;
+    let tree = GenApiTree::parse(xml).unwrap();
+    let mut io = MemoryRegisterAccess::new(32);
+    io.write_memory(0x10, &7u32.to_be_bytes()).unwrap();
+    io.write_memory(0x14, &9u32.to_be_bytes()).unwrap();
+
+    assert_eq!(tree.get_integer(&mut io, "Gain").unwrap(), 7);
+    tree.set_enum_symbolic(&mut io, "GainSelector", "Red").unwrap();
+    assert_eq!(tree.get_integer(&mut io, "Gain").unwrap(), 9, "read from the Red gain's address");
+    tree.set_enum_symbolic(&mut io, "GainSelector", "All").unwrap();
+    assert_eq!(tree.get_integer(&mut io, "Gain").unwrap(), 7);
+
+    // An unchanged selector still hits the cache.
+    let reads_before = io.read_count;
+    assert_eq!(tree.get_integer(&mut io, "Gain").unwrap(), 7);
+    assert_eq!(io.read_count, reads_before, "cached, no new device read");
+}
