@@ -1,7 +1,9 @@
 //! A small, hand-authored GenICam XML document exercising the node types the live
 //! AT-Automation Technology C5-2040-GigE camera actually uses (`Category`, `Integer`,
 //! `IntReg`, `Enumeration`+`EnumEntry`, `Float`, `Command`), used to unblock
-//! `aravis-port-device` integration tests ahead of the full GenICam engine (Phase 3).
+//! `aravis-port-device` integration tests ahead of the full GenICam engine (Phase 3). The
+//! frame-rate, trigger and reverse features mirror the C6-2040-GigE's bounds/lock shapes
+//! (`pMax`, `Unit`, `pIsLocked`) for `GenApiTree::feature_info`; the fake only stores them.
 
 use crate::registers::feature;
 
@@ -19,7 +21,16 @@ pub fn minimal_genicam_xml() -> Vec<u8> {
     <pFeature>AcquisitionStop</pFeature>
     <pFeature>ChunkModeActive</pFeature>
     <pFeature>PayloadSize</pFeature>
+    <pFeature>AcquisitionFrameRateEnable</pFeature>
+    <pFeature>AcquisitionFrameRate</pFeature>
+    <pFeature>TriggerSoftware</pFeature>
+    <pFeature>ReverseX</pFeature>
   </Category>
+
+  <Integer Name="TLParamsLocked">
+    <ImposedAccessMode>RW</ImposedAccessMode>
+    <Value>0</Value>
+  </Integer>
 
   <IntReg Name="WidthReg">
     <Address>0x{width_addr:x}</Address>
@@ -69,9 +80,13 @@ pub fn minimal_genicam_xml() -> Vec<u8> {
     <Endianess>BigEndian</Endianess>
   </IntReg>
   <Float Name="ExposureTime">
+    <pIsLocked>TLParamsLocked</pIsLocked>
     <pValue>ExposureTimeReg</pValue>
     <Min>1</Min>
     <Max>1000000</Max>
+    <Inc>1</Inc>
+    <Unit>us</Unit>
+    <Representation>Linear</Representation>
   </Float>
 
   <IntReg Name="GainReg">
@@ -130,11 +145,68 @@ pub fn minimal_genicam_xml() -> Vec<u8> {
     <pValue>ChunkFrameIDReg</pValue>
   </Integer>
 
+  <IntReg Name="AcquisitionFrameRateEnableReg">
+    <Address>0x{frame_rate_enable_addr:x}</Address>
+    <Length>4</Length>
+    <AccessMode>RW</AccessMode>
+    <Sign>Unsigned</Sign>
+    <Endianess>BigEndian</Endianess>
+  </IntReg>
+  <Boolean Name="AcquisitionFrameRateEnable">
+    <pValue>AcquisitionFrameRateEnableReg</pValue>
+  </Boolean>
+  <IntSwissKnife Name="isAcquisitionFrameRateDisabledOrTLParamsLocked">
+    <pVariable Name="E">AcquisitionFrameRateEnableReg</pVariable>
+    <pVariable Name="L">TLParamsLocked</pVariable>
+    <Formula>(E = 0) || L</Formula>
+  </IntSwissKnife>
+  <Integer Name="SensorRateMax">
+    <ImposedAccessMode>RO</ImposedAccessMode>
+    <Value>500</Value>
+  </Integer>
+  <FloatReg Name="AcquisitionFrameRateReg">
+    <Address>0x{frame_rate_addr:x}</Address>
+    <Length>4</Length>
+    <AccessMode>RW</AccessMode>
+    <Endianess>BigEndian</Endianess>
+  </FloatReg>
+  <Float Name="AcquisitionFrameRate">
+    <pIsLocked>isAcquisitionFrameRateDisabledOrTLParamsLocked</pIsLocked>
+    <pValue>AcquisitionFrameRateReg</pValue>
+    <Min>1</Min>
+    <pMax>SensorRateMax</pMax>
+    <Unit>Hz</Unit>
+  </Float>
+
+  <IntReg Name="TriggerSoftwareReg">
+    <Address>0x{trigger_software_addr:x}</Address>
+    <Length>4</Length>
+    <AccessMode>WO</AccessMode>
+    <Sign>Unsigned</Sign>
+    <Endianess>BigEndian</Endianess>
+  </IntReg>
+  <Command Name="TriggerSoftware">
+    <pValue>TriggerSoftwareReg</pValue>
+    <CommandValue>1</CommandValue>
+  </Command>
+
+  <IntReg Name="ReverseXReg">
+    <Address>0x{reverse_x_addr:x}</Address>
+    <Length>4</Length>
+    <AccessMode>RW</AccessMode>
+    <Sign>Unsigned</Sign>
+    <Endianess>BigEndian</Endianess>
+  </IntReg>
+  <Boolean Name="ReverseX">
+    <pValue>ReverseXReg</pValue>
+  </Boolean>
+
   <IntSwissKnife Name="PayloadSize">
     <pVariable Name="W">Width</pVariable>
     <pVariable Name="H">Height</pVariable>
     <pVariable Name="C">ChunkModeActiveReg</pVariable>
-    <Formula>W * H + (C ? {chunk_extra_bytes} : 0)</Formula>
+    <pVariable Name="P">PixelFormatReg</pVariable>
+    <Formula>W * H * (P = 1 ? 1 : 2) + (C ? {chunk_extra_bytes} : 0)</Formula>
   </IntSwissKnife>
 </RegisterDescription>
 "#,
@@ -145,6 +217,10 @@ pub fn minimal_genicam_xml() -> Vec<u8> {
         gain_addr = feature::GAIN_RAW,
         acquisition_addr = feature::ACQUISITION_ACTIVE,
         chunk_mode_addr = feature::CHUNK_MODE_ACTIVE,
+        frame_rate_enable_addr = feature::FRAME_RATE_ENABLE,
+        frame_rate_addr = feature::FRAME_RATE,
+        trigger_software_addr = feature::TRIGGER_SOFTWARE,
+        reverse_x_addr = feature::REVERSE_X,
         chunk_id_frame_id = crate::gvsp_server::CHUNK_ID_FRAME_ID,
         chunk_extra_bytes = crate::gvsp_server::CHUNK_MODE_EXTRA_BYTES,
     )
@@ -168,6 +244,10 @@ mod tests {
             "AcquisitionStop",
             "ChunkModeActive",
             "PayloadSize",
+            "AcquisitionFrameRateEnable",
+            "AcquisitionFrameRate",
+            "TriggerSoftware",
+            "ReverseX",
         ] {
             assert!(xml.contains(&format!("Name=\"{name}\"")), "missing feature {name}");
         }

@@ -51,6 +51,39 @@ impl RegisterDescription {
     }
 }
 
+/// One entry of an `Enumeration`, as reported by [`GenApiTree::feature_info`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EnumEntryState {
+    pub name: String,
+    pub value: i64,
+    /// The entry's own `pIsImplemented`/`pIsAvailable` predicates hold. A device lists entries it
+    /// doesn't support this way (e.g. gain steps a sensor variant lacks).
+    pub available: bool,
+}
+
+/// What a GenICam browser shows next to a feature besides its value: whether it can be used
+/// right now, and the range and unit to offer. Evaluated in one go by
+/// [`GenApiTree::feature_info`].
+#[derive(Debug, Clone, PartialEq)]
+pub struct FeatureInfo {
+    /// The node kind, as [`GenApiTree::node_kind`] names it.
+    pub kind: &'static str,
+    /// All `pIsImplemented`/`pIsAvailable` predicates hold.
+    pub available: bool,
+    /// Some `pIsLocked` predicate holds: the feature is readable but must not be written now.
+    pub locked: bool,
+    /// Evaluated `Min`/`pMin`, `Max`/`pMax` and `Inc`/`pInc`, in the feature's own type (`Int`
+    /// for an `Integer`, `Float` for a `Float`). `None` when the document gives none, the feature
+    /// is unavailable, or the bound can't be evaluated or isn't finite.
+    pub min: Option<Value>,
+    pub max: Option<Value>,
+    pub inc: Option<Value>,
+    pub unit: Option<String>,
+    pub representation: Option<String>,
+    /// The entries of an `Enumeration`, in document order; `None` for any other kind.
+    pub entries: Option<Vec<EnumEntryState>>,
+}
+
 /// The parsed GenICam node tree plus register cache/invalidation state. Transport-agnostic:
 /// every method that touches the wire takes a `&mut impl RegisterAccess`.
 pub struct GenApiTree {
@@ -58,6 +91,8 @@ pub struct GenApiTree {
     nodes: Vec<Node>,
     /// `pIsImplemented`/`pIsAvailable` predicates per node, for [`GenApiTree::is_available`].
     availability: HashMap<NodeId, Vec<NodeId>>,
+    /// `pIsLocked` predicates per node, for [`GenApiTree::is_locked`].
+    locked: HashMap<NodeId, Vec<NodeId>>,
     names: HashMap<String, NodeId>,
     cache: Vec<RefCell<Option<CachedValue>>>,
     epoch: Vec<Cell<u64>>,
@@ -149,6 +184,9 @@ impl<'a> Builder<'a> {
         if let Some(target) = self.resolve_child_ref(idx, "pValue")? {
             return Ok(ValueSource::PValue(target));
         }
+        if let Some(indexed) = self.indexed_source(idx, true)? {
+            return Ok(indexed);
+        }
         if let Some(v) = self.dom.child(idx, "Value") {
             return Ok(ValueSource::LiteralInt(parse_int_literal(&self.dom.get(v).text)?));
         }
@@ -159,10 +197,86 @@ impl<'a> Builder<'a> {
         if let Some(target) = self.resolve_child_ref(idx, "pValue")? {
             return Ok(ValueSource::PValue(target));
         }
+        if let Some(indexed) = self.indexed_source(idx, false)? {
+            return Ok(indexed);
+        }
         if let Some(v) = self.dom.child(idx, "Value") {
             return Ok(ValueSource::LiteralFloat(parse_float_literal(&self.dom.get(v).text)?));
         }
         Ok(ValueSource::LiteralFloat(0.0))
+    }
+
+    fn literal(text: &str, is_int: bool) -> Result<ValueSource> {
+        Ok(if is_int {
+            ValueSource::LiteralInt(parse_int_literal(text)?)
+        } else {
+            ValueSource::LiteralFloat(parse_float_literal(text)?)
+        })
+    }
+
+    /// A `<pIndex>` value table (see [`ValueSource::Indexed`]), or `None` without a `pIndex`.
+    fn indexed_source(&self, idx: usize, is_int: bool) -> Result<Option<ValueSource>> {
+        let Some(index) = self.resolve_child_ref(idx, "pIndex")? else {
+            return Ok(None);
+        };
+        let key = |e: usize| -> Result<i64> {
+            let el = self.dom.get(e);
+            let text = el
+                .attrs
+                .get("Index")
+                .ok_or_else(|| GenIcamError::Xml(format!("{} missing Index attribute", el.tag)))?;
+            parse_int_literal(text)
+        };
+        let mut entries = Vec::new();
+        for e in self.dom.children_with_tag(idx, "ValueIndexed") {
+            entries.push((key(e)?, Self::literal(&self.dom.get(e).text, is_int)?));
+        }
+        for e in self.dom.children_with_tag(idx, "pValueIndexed") {
+            entries.push((key(e)?, ValueSource::PValue(self.resolve(&self.dom.get(e).text)?)));
+        }
+        let default = match self.resolve_child_ref(idx, "pValueDefault")? {
+            Some(target) => ValueSource::PValue(target),
+            None => match self.dom.child(idx, "ValueDefault") {
+                Some(v) => Self::literal(&self.dom.get(v).text, is_int)?,
+                None => Self::literal("0", is_int)?,
+            },
+        };
+        Ok(Some(ValueSource::Indexed {
+            index,
+            entries,
+            default: Box::new(default),
+        }))
+    }
+
+    /// `<{tag}>` or `<p{tag}>` (`Min`, `Max`, `Inc`); the pointer wins. A pointer to a node this
+    /// crate can't build is ignored rather than failing the whole document over a bound, which
+    /// only ever served as a UI hint before.
+    fn numeric_bound(&self, idx: usize, tag: &str, is_int: bool) -> Result<Option<ValueSource>> {
+        if let Some(p) = self.dom.child(idx, &format!("p{tag}")) {
+            return Ok(self.names.get(self.dom.get(p).text.trim()).map(|&id| ValueSource::PValue(id)));
+        }
+        match self.dom.child(idx, tag) {
+            Some(c) => Ok(Some(Self::literal(&self.dom.get(c).text, is_int)?)),
+            None => Ok(None),
+        }
+    }
+
+    fn child_text(&self, idx: usize, tag: &str) -> Option<String> {
+        self.dom
+            .child(idx, tag)
+            .map(|c| self.dom.get(c).text.trim().to_string())
+            .filter(|t| !t.is_empty())
+    }
+
+    fn numeric_node(&self, idx: usize, is_int: bool) -> Result<NumericNode> {
+        Ok(NumericNode {
+            value: if is_int { self.value_source_int(idx)? } else { self.value_source_float(idx)? },
+            min: self.numeric_bound(idx, "Min", is_int)?,
+            max: self.numeric_bound(idx, "Max", is_int)?,
+            inc: self.numeric_bound(idx, "Inc", is_int)?,
+            unit: self.child_text(idx, "Unit"),
+            representation: self.child_text(idx, "Representation"),
+        })
     }
 
     fn register_spec(&self, idx: usize) -> Result<RegisterAccessSpec> {
@@ -293,6 +407,16 @@ impl<'a> Builder<'a> {
         Ok(predicates)
     }
 
+    /// The `pIsLocked` predicates of the element at `idx`. Lenient like
+    /// [`Builder::numeric_bound`]: a dangling predicate is skipped, not an error.
+    fn lock_predicates(&self, idx: usize) -> Vec<NodeId> {
+        self.dom
+            .children_with_tag(idx, "pIsLocked")
+            .into_iter()
+            .filter_map(|p| self.names.get(self.dom.get(p).text.trim()).copied())
+            .collect()
+    }
+
     fn variables_constants_subexprs(&self, idx: usize) -> Result<VariablesConstantsSubExprs> {
         let mut variables = Vec::new();
         for v in self.dom.children_with_tag(idx, "pVariable") {
@@ -410,16 +534,8 @@ impl<'a> Builder<'a> {
     fn build_node(&self, idx: usize) -> Result<Node> {
         Ok(match self.dom.get(idx).tag.as_str() {
             "Category" => Node::Category(self.build_category(idx)?),
-            "Integer" => Node::Integer(NumericNode {
-                value: self.value_source_int(idx)?,
-                min: None,
-                max: None,
-            }),
-            "Float" => Node::Float(NumericNode {
-                value: self.value_source_float(idx)?,
-                min: None,
-                max: None,
-            }),
+            "Integer" => Node::Integer(self.numeric_node(idx, true)?),
+            "Float" => Node::Float(self.numeric_node(idx, false)?),
             "Boolean" => Node::Boolean(BooleanNode {
                 value: self.value_source_int(idx)?,
             }),
@@ -511,11 +627,16 @@ impl GenApiTree {
         // `builder.nodes` — that field exists solely to size `built_nodes` below.
         let mut built_nodes: Vec<Node> = (0..n).map(|_| Node::Category(CategoryNode::default())).collect();
         let mut availability = HashMap::new();
+        let mut locked = HashMap::new();
         for (&idx, &id) in &builder.dom_to_node {
             built_nodes[id.index()] = builder.build_node(idx)?;
             let predicates = builder.availability(idx)?;
             if !predicates.is_empty() {
                 availability.insert(id, predicates);
+            }
+            let lock = builder.lock_predicates(idx);
+            if !lock.is_empty() {
+                locked.insert(id, lock);
             }
         }
 
@@ -524,6 +645,7 @@ impl GenApiTree {
             register_description: RegisterDescription::from_root(&dom),
             nodes: built_nodes,
             availability,
+            locked,
             names: builder.names,
             cache: (0..n).map(|_| RefCell::new(None)).collect(),
             epoch: (0..n).map(|_| Cell::new(0)).collect(),
@@ -543,12 +665,164 @@ impl GenApiTree {
     /// Evaluating a predicate may read device registers.
     pub fn is_available(&self, io: &mut impl RegisterAccess, name: &str) -> Result<bool> {
         let id = self.node_id(name)?;
+        self.available_by_id(io, id, name)
+    }
+
+    fn available_by_id(&self, io: &mut impl RegisterAccess, id: NodeId, name: &str) -> Result<bool> {
         for &predicate in self.availability.get(&id).into_iter().flatten() {
             if self.eval_node(io, predicate, name)?.as_i64() == 0 {
                 return Ok(false);
             }
         }
         Ok(true)
+    }
+
+    /// Whether `name` is currently locked, i.e. any of its `pIsLocked` predicates evaluates
+    /// non-zero (a feature without any is never locked). A locked feature can be read but not
+    /// written. Predicates on the GenTL-side `TLParamsLocked` evaluate to that node's literal,
+    /// as this crate never sets it. Evaluating a predicate may read device registers.
+    pub fn is_locked(&self, io: &mut impl RegisterAccess, name: &str) -> Result<bool> {
+        let id = self.node_id(name)?;
+        self.locked_by_id(io, id, name)
+    }
+
+    fn locked_by_id(&self, io: &mut impl RegisterAccess, id: NodeId, name: &str) -> Result<bool> {
+        for &predicate in self.locked.get(&id).into_iter().flatten() {
+            if self.eval_node(io, predicate, name)?.as_i64() != 0 {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    /// Whether any `pIsLocked` predicate of `name` depends on node `target`, directly or through
+    /// the formulas, values and addresses it is computed from. Structural: no device I/O.
+    ///
+    /// Asked with `"TLParamsLocked"` it tells which features the device locks while acquiring
+    /// (GenTL sets that node during acquisition). This crate never sets it, so such features
+    /// report unlocked and accept writes, but a device may only apply them at the next
+    /// acquisition start: the live C6-2040-GigE stores a new `ExposureTime` mid-acquisition and
+    /// keeps exposing with the old one.
+    pub fn lock_depends_on(&self, name: &str, target: &str) -> Result<bool> {
+        let id = self.node_id(name)?;
+        let Ok(target) = self.node_id(target) else {
+            return Ok(false);
+        };
+        let mut seen = std::collections::HashSet::new();
+        let mut stack: Vec<NodeId> = self.locked.get(&id).cloned().unwrap_or_default();
+        while let Some(next) = stack.pop() {
+            if next == target {
+                return Ok(true);
+            }
+            if seen.insert(next) {
+                self.node_references(next, &mut stack);
+            }
+        }
+        Ok(false)
+    }
+
+    /// The nodes `id`'s value is computed from (not its invalidators or bounds).
+    fn node_references(&self, id: NodeId, out: &mut Vec<NodeId>) {
+        fn value_refs(vs: &ValueSource, out: &mut Vec<NodeId>) {
+            match vs {
+                ValueSource::LiteralInt(_) | ValueSource::LiteralFloat(_) => {}
+                ValueSource::PValue(target) => out.push(*target),
+                ValueSource::Indexed { index, entries, default } => {
+                    out.push(*index);
+                    for (_, v) in entries {
+                        value_refs(v, out);
+                    }
+                    value_refs(default, out);
+                }
+            }
+        }
+        fn address_refs(spec: &RegisterAccessSpec, out: &mut Vec<NodeId>) {
+            for term in &spec.address_terms {
+                match term {
+                    AddressTerm::Literal(_) => {}
+                    AddressTerm::PAddress(target) => out.push(*target),
+                    AddressTerm::Index { index, offset } => {
+                        out.push(*index);
+                        if let IndexOffset::PNode(node) = offset {
+                            out.push(*node);
+                        }
+                    }
+                }
+            }
+        }
+        match &self.nodes[id.index()] {
+            Node::Integer(n) | Node::Float(n) => value_refs(&n.value, out),
+            Node::Boolean(n) => value_refs(&n.value, out),
+            Node::Enumeration(e) => value_refs(&e.value, out),
+            Node::Command(c) => value_refs(&c.value, out),
+            Node::SwissKnife(sk) => out.extend(sk.variables.iter().map(|(_, v)| *v)),
+            Node::Converter(c) => {
+                out.extend(c.variables.iter().map(|(_, v)| *v));
+                out.push(c.value_link);
+            }
+            Node::IntReg(spec) | Node::FloatReg(spec) | Node::StringReg(spec) => address_refs(spec, out),
+            Node::String(StringSource::PValue(target)) => out.push(*target),
+            Node::String(StringSource::Literal(_)) | Node::Category(_) | Node::EnumEntry(_) => {}
+        }
+    }
+
+    /// Availability, lock state, range, unit and (for an `Enumeration`) per-entry availability
+    /// of `name`, for presenting it in a UI. Only an unknown `name` is an error: a predicate that
+    /// can't be evaluated counts as available/unlocked, and a bound that can't be evaluated is
+    /// `None`, so one odd node never hides the rest of what is known.
+    pub fn feature_info(&self, io: &mut impl RegisterAccess, name: &str) -> Result<FeatureInfo> {
+        let id = self.node_id(name)?;
+        let node = &self.nodes[id.index()];
+        let available = self.available_by_id(io, id, name).unwrap_or(true);
+        let locked = self.locked_by_id(io, id, name).unwrap_or(false);
+
+        let mut info = FeatureInfo {
+            kind: node.kind_name(),
+            available,
+            locked,
+            min: None,
+            max: None,
+            inc: None,
+            unit: None,
+            representation: None,
+            entries: None,
+        };
+        match node {
+            Node::Integer(n) | Node::Float(n) => {
+                let is_int = matches!(node, Node::Integer(_));
+                if available {
+                    let mut bound = |vs: &Option<ValueSource>| -> Option<Value> {
+                        let v = self.eval_value_source(io, vs.as_ref()?, name).ok()?;
+                        if is_int {
+                            Some(Value::Int(v.as_i64()))
+                        } else {
+                            Some(Value::Float(v.as_f64())).filter(|v| v.as_f64().is_finite())
+                        }
+                    };
+                    info.min = bound(&n.min);
+                    info.max = bound(&n.max);
+                    info.inc = bound(&n.inc);
+                }
+                info.unit = n.unit.clone();
+                info.representation = n.representation.clone();
+            }
+            Node::Enumeration(e) => {
+                let mut entries = Vec::with_capacity(e.entries.len());
+                for (entry_name, entry_id) in &e.entries {
+                    let Node::EnumEntry(entry) = &self.nodes[entry_id.index()] else {
+                        continue;
+                    };
+                    entries.push(EnumEntryState {
+                        name: entry_name.clone(),
+                        value: entry.value,
+                        available: self.available_by_id(io, *entry_id, name).unwrap_or(true),
+                    });
+                }
+                info.entries = Some(entries);
+            }
+            _ => {}
+        }
+        Ok(info)
     }
 
     pub fn node_id(&self, name: &str) -> Result<NodeId> {
@@ -692,6 +966,11 @@ impl GenApiTree {
             ValueSource::LiteralInt(v) => Ok(Value::Int(*v)),
             ValueSource::LiteralFloat(v) => Ok(Value::Float(*v)),
             ValueSource::PValue(target) => self.eval_node(io, *target, context_name),
+            ValueSource::Indexed { index, entries, default } => {
+                let key = self.eval_node(io, *index, context_name)?.as_i64();
+                let source = entries.iter().find(|(k, _)| *k == key).map(|(_, v)| v).unwrap_or(default);
+                self.eval_value_source(io, source, context_name)
+            }
         }
     }
 
@@ -940,6 +1219,11 @@ impl GenApiTree {
                 })
             }
         };
-        self.write_value_source(io, &value_source, Value::Int(command_value), name)
+        self.write_value_source(io, &value_source, Value::Int(command_value), name)?;
+        // Registers name commands as invalidators (`<pInvalidator>UserSetLoad</pInvalidator>` on
+        // the live C6-2040-GigE): executing one must invalidate them, not just the register the
+        // command itself writes.
+        self.bump_epoch(id);
+        Ok(())
     }
 }

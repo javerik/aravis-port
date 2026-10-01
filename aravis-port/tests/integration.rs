@@ -86,6 +86,37 @@ fn camera_start_stream_receives_ten_frames() {
     assert_eq!(received, 10);
 }
 
+/// Selecting an unpacked >8-bit format must widen both `PayloadSize` and the streamed buffers
+/// to two bytes per pixel, with the fake's little-endian gradient going above 255.
+#[test]
+fn camera_streams_two_bytes_per_pixel_in_mono16() {
+    let camera = fake_camera(FakeCameraConfig {
+        frame_period: Duration::from_millis(15),
+        ..Default::default()
+    });
+    camera.poke_register(feature::WIDTH, 64);
+    camera.poke_register(feature::HEIGHT, 32);
+    camera.poke_register(feature::ACQUISITION_ACTIVE, 1);
+
+    let cam = Camera::connect_addr(camera.local_addr()).unwrap();
+    cam.write::<String>("PixelFormat", "Mono16".to_string()).unwrap();
+    assert_eq!(cam.read::<i64>("PayloadSize").unwrap(), 64 * 32 * 2);
+
+    let (tx, rx) = std::sync::mpsc::channel();
+    let stream = cam
+        .start_stream(move |buffer: Buffer| {
+            let _ = tx.send(buffer);
+        })
+        .unwrap();
+    let buf = rx.recv_timeout(Duration::from_secs(3)).expect("expected a frame");
+    cam.stop_stream(stream).unwrap();
+
+    assert_eq!(buf.status, BufferStatus::Success);
+    assert_eq!(buf.data().len(), 64 * 32 * 2);
+    let max = buf.data().chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).max().unwrap();
+    assert!(max > 255, "a 16-bit frame should use more than 8 bits, max was {max}");
+}
+
 /// `start_stream_with_config` must actually apply the caller's packet size to the device
 /// (`GevSCPSPacketSize`, not the hardcoded convenience default), and streaming must still work
 /// end-to-end with it.
@@ -270,4 +301,44 @@ fn heartbeat_loss_allows_control_reacquisition() {
 
     let second = Device::connect(camera.local_addr(), DeviceConfig::default()).unwrap();
     assert!(second.has_control());
+}
+
+/// `feature_info` reports the fake's C6-shaped bounds, and the frame rate's `pIsLocked` follows
+/// its enable over the wire.
+#[test]
+fn feature_info_reports_bounds_and_lock() {
+    use aravis_port::genicam::Value;
+
+    let camera = fake_camera(FakeCameraConfig::default());
+    let cam = Camera::connect_addr(camera.local_addr()).unwrap();
+
+    let exposure = cam.feature_info("ExposureTime").unwrap();
+    assert_eq!(exposure.kind, "Float");
+    assert_eq!(exposure.min, Some(Value::Float(1.0)));
+    assert_eq!(exposure.max, Some(Value::Float(1_000_000.0)));
+    assert_eq!(exposure.inc, Some(Value::Float(1.0)));
+    assert_eq!(exposure.unit.as_deref(), Some("us"));
+    assert!(exposure.available);
+    assert!(!exposure.locked, "TLParamsLocked is a literal 0");
+
+    let rate = cam.feature_info("AcquisitionFrameRate").unwrap();
+    assert_eq!(rate.max, Some(Value::Float(500.0)), "pMax -> SensorRateMax");
+    assert!(!rate.locked);
+    cam.write("AcquisitionFrameRateEnable", false).unwrap();
+    assert!(cam.is_locked("AcquisitionFrameRate").unwrap());
+    cam.write("AcquisitionFrameRateEnable", true).unwrap();
+    assert!(!cam.is_locked("AcquisitionFrameRate").unwrap());
+
+    cam.write::<f64>("AcquisitionFrameRate", 12.5).unwrap();
+    assert_eq!(cam.read::<f64>("AcquisitionFrameRate").unwrap(), 12.5);
+}
+
+#[test]
+fn trigger_software_writes_its_register() {
+    let camera = fake_camera(FakeCameraConfig::default());
+    let cam = Camera::connect_addr(camera.local_addr()).unwrap();
+
+    assert_eq!(camera.peek_register(feature::TRIGGER_SOFTWARE), 0);
+    cam.execute_command("TriggerSoftware").unwrap();
+    assert_eq!(camera.peek_register(feature::TRIGGER_SOFTWARE), 1);
 }

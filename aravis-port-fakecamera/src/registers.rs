@@ -16,6 +16,14 @@ pub mod feature {
     pub const GAIN_RAW: u32 = 0x110;
     pub const ACQUISITION_ACTIVE: u32 = 0x114;
     pub const CHUNK_MODE_ACTIVE: u32 = 0x118;
+    /// `AcquisitionFrameRateEnable` (0/1). Only stored: the fake's frame period is fixed.
+    pub const FRAME_RATE_ENABLE: u32 = 0x11c;
+    /// `AcquisitionFrameRate`, an IEEE-754 `f32` bit pattern. Only stored, like the enable.
+    pub const FRAME_RATE: u32 = 0x120;
+    /// `TriggerSoftware`'s write-only target; holds the last command value written.
+    pub const TRIGGER_SOFTWARE: u32 = 0x124;
+    /// `ReverseX` (0/1). Only stored.
+    pub const REVERSE_X: u32 = 0x128;
 }
 
 /// PixelFormat register values understood by the built-in fake-camera GenICam XML.
@@ -75,6 +83,10 @@ impl RegisterBank {
         write_u32(&mut registers, feature::GAIN_RAW, 0);
         write_u32(&mut registers, feature::ACQUISITION_ACTIVE, 0);
         write_u32(&mut registers, feature::CHUNK_MODE_ACTIVE, 0);
+        write_u32(&mut registers, feature::FRAME_RATE_ENABLE, 1);
+        write_u32(&mut registers, feature::FRAME_RATE, 30.0f32.to_bits());
+        write_u32(&mut registers, feature::TRIGGER_SOFTWARE, 0);
+        write_u32(&mut registers, feature::REVERSE_X, 0);
 
         Self { registers, xml }
     }

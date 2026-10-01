@@ -6,7 +6,7 @@ use std::time::Duration;
 use aravis_port_core::bootstrap::{control_channel_privilege, offset};
 use aravis_port_core::{Error, Result};
 use aravis_port_core::memory::Buffer;
-use aravis_port_genicam::{ChunkDataAccess, GenApiTree};
+use aravis_port_genicam::{ChunkDataAccess, FeatureInfo, GenApiTree};
 
 use crate::feature::FeatureValue;
 use crate::heartbeat::HeartbeatHandle;
@@ -147,6 +147,24 @@ impl Device {
     /// `pIsAvailable` conditions hold). GenICam browsers show unavailable features as "-".
     pub fn is_available(&self, name: &str) -> Result<bool> {
         self.with_io(|tree, io| tree.is_available(io, name).map_err(|e| Error::GenIcam(e.to_string())))
+    }
+
+    /// Whether feature `name` is currently locked (a `pIsLocked` condition holds): readable, but
+    /// not to be written now.
+    pub fn is_locked(&self, name: &str) -> Result<bool> {
+        self.with_io(|tree, io| tree.is_locked(io, name).map_err(|e| Error::GenIcam(e.to_string())))
+    }
+
+    /// Whether a `pIsLocked` condition of feature `name` depends on node `target`. See
+    /// [`GenApiTree::lock_depends_on`]; no device I/O.
+    pub fn lock_depends_on(&self, name: &str, target: &str) -> Result<bool> {
+        self.genicam.lock_depends_on(name, target).map_err(|e| Error::GenIcam(e.to_string()))
+    }
+
+    /// Availability, lock state, range and unit of feature `name`, evaluated under a single
+    /// hold of the control channel. See [`GenApiTree::feature_info`].
+    pub fn feature_info(&self, name: &str) -> Result<FeatureInfo> {
+        self.with_io(|tree, io| tree.feature_info(io, name).map_err(|e| Error::GenIcam(e.to_string())))
     }
 
     /// Write a feature by name (`device.write("ExposureTime", 1000.0)`).

@@ -88,6 +88,15 @@ pub enum ValueSource {
     /// `pValue`: delegate entirely to another node (an `IntReg`, `SwissKnife`, `Converter`, or
     /// another plain feature node).
     PValue(NodeId),
+    /// `<pIndex>` plus `<ValueIndexed Index>`/`<pValueIndexed Index>` and
+    /// `<ValueDefault>`/`<pValueDefault>`: the value is a lookup table keyed by another node's
+    /// value. Read-only. Confirmed necessary against the live C6-2040-GigE, whose standard `Gain`
+    /// maps the vendor `SensorGainReg` index to a gain factor this way.
+    Indexed {
+        index: NodeId,
+        entries: Vec<(i64, ValueSource)>,
+        default: Box<ValueSource>,
+    },
 }
 
 #[derive(Debug, Clone, Default)]
@@ -98,8 +107,14 @@ pub struct CategoryNode {
 #[derive(Debug, Clone)]
 pub struct NumericNode {
     pub value: ValueSource,
+    /// `<Min>`/`<pMin>`, `<Max>`/`<pMax>` and `<Inc>`/`<pInc>`; a pointer wins over a literal.
     pub min: Option<ValueSource>,
     pub max: Option<ValueSource>,
+    pub inc: Option<ValueSource>,
+    /// `<Unit>` text (Float only in the standard, but read for Integer too).
+    pub unit: Option<String>,
+    /// `<Representation>` text (`Linear`, `Logarithmic`, `HexNumber`, `IPV4Address`, ...).
+    pub representation: Option<String>,
 }
 
 #[derive(Debug, Clone)]

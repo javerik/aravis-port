@@ -1,4 +1,4 @@
-use aravis_port_genicam::{ChunkDataAccess, GenApiTree, MemoryRegisterAccess, RegisterAccess};
+use aravis_port_genicam::{ChunkDataAccess, EnumEntryState, GenApiTree, GenIcamError, MemoryRegisterAccess, RegisterAccess, Value};
 
 #[test]
 fn literal_values_of_every_basic_type() {
@@ -430,4 +430,259 @@ fn a_cached_selector_indexed_register_is_reread_when_the_selector_moves_it() {
     let reads_before = io.read_count;
     assert_eq!(tree.get_integer(&mut io, "Gain").unwrap(), 7);
     assert_eq!(io.read_count, reads_before, "cached, no new device read");
+}
+
+/// A 4-byte big-endian RW register at `addr` plus an `Integer` front-end over it.
+fn int_reg(name: &str, addr: u32) -> String {
+    format!(
+        r#"<IntReg Name="{name}Reg"><Address>{addr:#x}</Address><Length>4</Length><Endianess>BigEndian</Endianess></IntReg>
+      <Integer Name="{name}"><pValue>{name}Reg</pValue></Integer>"#
+    )
+}
+
+#[test]
+fn literal_and_pointer_bounds_are_evaluated() {
+    let xml = format!(
+        r#"<RegisterDescription>
+      {}
+      <Float Name="ExposureTime">
+        <Value>10.0</Value>
+        <Min>0.01</Min>
+        <pMax>ExposureMax</pMax>
+        <Inc>0.01</Inc>
+        <Unit>us</Unit>
+        <Representation>Logarithmic</Representation>
+      </Float>
+      <Integer Name="Width">
+        <Value>64</Value>
+        <pMin>WidthMin</pMin>
+        <Min>99</Min>
+        <Max>0x800</Max>
+        <pInc>WidthInc</pInc>
+      </Integer>
+      <Integer Name="WidthMin"><Value>16</Value></Integer>
+      <Integer Name="WidthInc"><Value>8</Value></Integer>
+      <Integer Name="Plain"><Value>1</Value></Integer>
+    </RegisterDescription>"#,
+        int_reg("ExposureMax", 0)
+    );
+    let tree = GenApiTree::parse(&xml).unwrap();
+    let mut io = MemoryRegisterAccess::new(16);
+    io.write_memory(0, &5000u32.to_be_bytes()).unwrap();
+
+    let exposure = tree.feature_info(&mut io, "ExposureTime").unwrap();
+    assert_eq!(exposure.kind, "Float");
+    assert_eq!(exposure.min, Some(Value::Float(0.01)));
+    // An integer register behind a Float's bound comes back in the feature's own type.
+    assert_eq!(exposure.max, Some(Value::Float(5000.0)));
+    assert_eq!(exposure.inc, Some(Value::Float(0.01)));
+    assert_eq!(exposure.unit.as_deref(), Some("us"));
+    assert_eq!(exposure.representation.as_deref(), Some("Logarithmic"));
+    assert!(exposure.available && !exposure.locked);
+    assert_eq!(exposure.entries, None);
+
+    let width = tree.feature_info(&mut io, "Width").unwrap();
+    assert_eq!(width.min, Some(Value::Int(16)), "pMin wins over Min");
+    assert_eq!(width.max, Some(Value::Int(0x800)));
+    assert_eq!(width.inc, Some(Value::Int(8)));
+    assert_eq!(width.unit, None);
+
+    let plain = tree.feature_info(&mut io, "Plain").unwrap();
+    assert_eq!((plain.min, plain.max, plain.inc), (None, None, None));
+}
+
+#[test]
+fn bounds_of_an_unavailable_feature_are_not_evaluated() {
+    let xml = r#"<RegisterDescription>
+      <Integer Name="Off"><Value>0</Value></Integer>
+      <Float Name="LineRate">
+        <Value>100.0</Value>
+        <pIsAvailable>Off</pIsAvailable>
+        <Min>0</Min>
+        <Max>966</Max>
+        <Unit>Hz</Unit>
+      </Float>
+    </RegisterDescription>"#;
+    let tree = GenApiTree::parse(xml).unwrap();
+    let mut io = MemoryRegisterAccess::new(4);
+    let info = tree.feature_info(&mut io, "LineRate").unwrap();
+    assert!(!info.available);
+    assert_eq!((info.min, info.max), (None, None));
+    assert_eq!(info.unit.as_deref(), Some("Hz"), "static metadata is still reported");
+}
+
+#[test]
+fn is_locked_follows_its_predicate() {
+    // The C6 shape: the frame rate is locked while its enable is off.
+    let xml = format!(
+        r#"<RegisterDescription>
+      {}
+      <IntSwissKnife Name="isFrameRateDisabled">
+        <pVariable Name="E">FrameRateEnable</pVariable>
+        <Formula>E = 0</Formula>
+      </IntSwissKnife>
+      <Integer Name="TLParamsLocked"><Value>0</Value></Integer>
+      <Float Name="FrameRate">
+        <Value>2.0</Value>
+        <pIsLocked>isFrameRateDisabled</pIsLocked>
+        <pIsLocked>TLParamsLocked</pIsLocked>
+      </Float>
+      <Float Name="Unlockable"><Value>1.0</Value></Float>
+    </RegisterDescription>"#,
+        int_reg("FrameRateEnable", 0)
+    );
+    let tree = GenApiTree::parse(&xml).unwrap();
+    let mut io = MemoryRegisterAccess::new(16);
+
+    assert!(tree.is_locked(&mut io, "FrameRate").unwrap());
+    assert!(tree.feature_info(&mut io, "FrameRate").unwrap().locked);
+    tree.set_integer(&mut io, "FrameRateEnable", 1).unwrap();
+    assert!(!tree.is_locked(&mut io, "FrameRate").unwrap());
+    assert!(!tree.is_locked(&mut io, "Unlockable").unwrap());
+}
+
+#[test]
+fn a_dangling_lock_or_bound_pointer_does_not_fail_the_document() {
+    let xml = r#"<RegisterDescription>
+      <Float Name="F">
+        <Value>1.0</Value>
+        <pMax>NoSuchNode</pMax>
+        <pIsLocked>NoSuchLock</pIsLocked>
+      </Float>
+    </RegisterDescription>"#;
+    let tree = GenApiTree::parse(xml).unwrap();
+    let mut io = MemoryRegisterAccess::new(4);
+    let info = tree.feature_info(&mut io, "F").unwrap();
+    assert_eq!(info.max, None);
+    assert!(!info.locked);
+}
+
+#[test]
+fn enum_entry_availability_is_reported() {
+    let xml = r#"<RegisterDescription>
+      <Integer Name="No"><Value>0</Value></Integer>
+      <Enumeration Name="SensorGain">
+        <EnumEntry Name="Gain_1_0"><Value>2</Value></EnumEntry>
+        <EnumEntry Name="Gain_2_6"><pIsAvailable>No</pIsAvailable><Value>7</Value></EnumEntry>
+        <Value>2</Value>
+      </Enumeration>
+    </RegisterDescription>"#;
+    let tree = GenApiTree::parse(xml).unwrap();
+    let mut io = MemoryRegisterAccess::new(4);
+    let info = tree.feature_info(&mut io, "SensorGain").unwrap();
+    assert_eq!(info.kind, "Enumeration");
+    assert_eq!(
+        info.entries.unwrap(),
+        vec![
+            EnumEntryState { name: "Gain_1_0".into(), value: 2, available: true },
+            EnumEntryState { name: "Gain_2_6".into(), value: 7, available: false },
+        ]
+    );
+}
+
+#[test]
+fn value_indexed_float_follows_its_index_and_default() {
+    // The C6-2040-GigE's standard `Gain`, which maps the vendor gain index to a factor.
+    let xml = format!(
+        r#"<RegisterDescription>
+      {}
+      <Float Name="Fallback"><Value>9.5</Value></Float>
+      <Float Name="Gain">
+        <ImposedAccessMode>RO</ImposedAccessMode>
+        <pIndex>SensorGainReg</pIndex>
+        <ValueIndexed Index="0">0.5</ValueIndexed>
+        <ValueIndexed Index="2">1.0</ValueIndexed>
+        <pValueIndexed Index="5">Fallback</pValueIndexed>
+        <ValueDefault>1.0</ValueDefault>
+      </Float>
+    </RegisterDescription>"#,
+        int_reg("SensorGain", 0)
+    );
+    let tree = GenApiTree::parse(&xml).unwrap();
+    let mut io = MemoryRegisterAccess::new(16);
+
+    assert_eq!(tree.get_float(&mut io, "Gain").unwrap(), 0.5);
+    tree.set_integer(&mut io, "SensorGain", 2).unwrap();
+    assert_eq!(tree.get_float(&mut io, "Gain").unwrap(), 1.0);
+    tree.set_integer(&mut io, "SensorGain", 5).unwrap();
+    assert_eq!(tree.get_float(&mut io, "Gain").unwrap(), 9.5);
+    tree.set_integer(&mut io, "SensorGain", 3).unwrap();
+    assert_eq!(tree.get_float(&mut io, "Gain").unwrap(), 1.0, "unlisted index uses the default");
+    assert!(matches!(tree.set_float(&mut io, "Gain", 2.0), Err(GenIcamError::NotWritable(_))));
+}
+
+#[test]
+fn executing_a_command_invalidates_registers_listing_it() {
+    let xml = r#"<RegisterDescription>
+      <IntReg Name="LoadReg"><Address>0x10</Address><Length>4</Length><Endianess>BigEndian</Endianess></IntReg>
+      <Command Name="UserSetLoad"><pValue>LoadReg</pValue><CommandValue>1</CommandValue></Command>
+      <IntReg Name="ExposureReg">
+        <Address>0x0</Address>
+        <Length>4</Length>
+        <Endianess>BigEndian</Endianess>
+        <Cachable>WriteAround</Cachable>
+        <pInvalidator>UserSetLoad</pInvalidator>
+      </IntReg>
+      <Integer Name="Exposure"><pValue>ExposureReg</pValue></Integer>
+    </RegisterDescription>"#;
+    let tree = GenApiTree::parse(xml).unwrap();
+    let mut io = MemoryRegisterAccess::new(32);
+    io.write_memory(0, &1000u32.to_be_bytes()).unwrap();
+    assert_eq!(tree.get_integer(&mut io, "Exposure").unwrap(), 1000);
+
+    // The device loads a user set behind the cache's back.
+    io.write_memory(0, &2500u32.to_be_bytes()).unwrap();
+    assert_eq!(tree.get_integer(&mut io, "Exposure").unwrap(), 1000, "still cached");
+    tree.execute_command(&mut io, "UserSetLoad").unwrap();
+    assert_eq!(tree.get_integer(&mut io, "Exposure").unwrap(), 2500);
+}
+
+#[test]
+fn malformed_min_literal_is_an_error_not_a_panic() {
+    let xml = r#"<RegisterDescription>
+      <Integer Name="W"><Value>1</Value><Min>abc</Min></Integer>
+    </RegisterDescription>"#;
+    assert!(matches!(GenApiTree::parse(xml), Err(GenIcamError::Xml(_))));
+    let xml = r#"<RegisterDescription>
+      <Float Name="G"><pIndex>G</pIndex><ValueIndexed>1.0</ValueIndexed></Float>
+    </RegisterDescription>"#;
+    assert!(matches!(GenApiTree::parse(xml), Err(GenIcamError::Xml(_))), "ValueIndexed without Index");
+}
+
+#[test]
+fn feature_info_of_unknown_feature_is_not_found() {
+    let tree = GenApiTree::parse("<RegisterDescription/>").unwrap();
+    let mut io = MemoryRegisterAccess::new(4);
+    assert!(matches!(tree.feature_info(&mut io, "Nope"), Err(GenIcamError::NotFound(_))));
+    assert!(matches!(tree.is_locked(&mut io, "Nope"), Err(GenIcamError::NotFound(_))));
+}
+
+#[test]
+fn lock_dependencies_are_followed_through_formulas() {
+    // The C6 shapes: a direct TLParamsLocked lock, one through a SwissKnife, and a lock that has
+    // nothing to do with acquisition.
+    let xml = format!(
+        r#"<RegisterDescription>
+      {}
+      <Integer Name="TLParamsLocked"><Value>0</Value></Integer>
+      <IntSwissKnife Name="isFrameRateDisabledOrTLParamsLocked">
+        <pVariable Name="E">FrameRateEnable</pVariable>
+        <pVariable Name="L">TLParamsLocked</pVariable>
+        <Formula>(E = 0) || L</Formula>
+      </IntSwissKnife>
+      <Integer Name="LightConnected"><Value>1</Value></Integer>
+      <Float Name="ExposureTime"><Value>1.0</Value><pIsLocked>TLParamsLocked</pIsLocked></Float>
+      <Float Name="FrameRate"><Value>1.0</Value><pIsLocked>isFrameRateDisabledOrTLParamsLocked</pIsLocked></Float>
+      <Float Name="LightBrightness"><Value>1.0</Value><pIsLocked>LightConnected</pIsLocked></Float>
+      <Float Name="Free"><Value>1.0</Value></Float>
+    </RegisterDescription>"#,
+        int_reg("FrameRateEnable", 0)
+    );
+    let tree = GenApiTree::parse(&xml).unwrap();
+    assert!(tree.lock_depends_on("ExposureTime", "TLParamsLocked").unwrap());
+    assert!(tree.lock_depends_on("FrameRate", "TLParamsLocked").unwrap());
+    assert!(!tree.lock_depends_on("LightBrightness", "TLParamsLocked").unwrap());
+    assert!(!tree.lock_depends_on("Free", "TLParamsLocked").unwrap());
+    assert!(!tree.lock_depends_on("ExposureTime", "NoSuchNode").unwrap());
+    assert!(matches!(tree.lock_depends_on("Nope", "TLParamsLocked"), Err(GenIcamError::NotFound(_))));
 }

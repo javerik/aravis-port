@@ -131,7 +131,7 @@ fn build_frame_packets(
     packet_size: u16,
     chunk_mode: bool,
 ) -> Vec<(ContentType, u32, Vec<u8>)> {
-    let mut image = pattern::generate_mono8(width, height, frame_id);
+    let mut image = pattern::generate(width, height, frame_id, pixel_format);
     let mut payload_type = PayloadKind::Image.to_u16();
     if chunk_mode {
         payload_type |= HAS_CHUNKS_BIT;

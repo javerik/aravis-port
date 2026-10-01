@@ -74,6 +74,23 @@ impl Camera {
         self.device.is_available(name)
     }
 
+    /// Whether feature `name` is currently locked. See [`Device::is_locked`].
+    pub fn is_locked(&self, name: &str) -> Result<bool> {
+        self.device.is_locked(name)
+    }
+
+    /// Whether a `pIsLocked` condition of feature `name` depends on node `target`, e.g. which
+    /// features a device locks during acquisition (`"TLParamsLocked"`). See
+    /// [`Device::lock_depends_on`].
+    pub fn lock_depends_on(&self, name: &str, target: &str) -> Result<bool> {
+        self.device.lock_depends_on(name, target)
+    }
+
+    /// Availability, lock state, range and unit of feature `name`. See [`Device::feature_info`].
+    pub fn feature_info(&self, name: &str) -> Result<aravis_port_genicam::FeatureInfo> {
+        self.device.feature_info(name)
+    }
+
     /// Execute a GenICam `Command` feature (e.g. `"AcquisitionStart"`).
     pub fn execute_command(&self, name: &str) -> Result<()> {
         self.device.execute_command(name)
