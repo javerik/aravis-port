@@ -117,6 +117,75 @@ fn camera_streams_two_bytes_per_pixel_in_mono16() {
     assert!(max > 255, "a 16-bit frame should use more than 8 bits, max was {max}");
 }
 
+/// Linescan3D works like the C6's: switching into it moves `PixelFormat` to `Coord3D_C16`, the
+/// only entry that mode offers, and the device refuses the area-scan formats until it is
+/// switched back.
+#[test]
+fn linescan3d_switches_pixel_format_to_coord3d_c16() {
+    let camera = fake_camera(FakeCameraConfig::default());
+    let cam = Camera::connect_addr(camera.local_addr()).unwrap();
+    assert_eq!(cam.read::<String>("DeviceScanType").unwrap(), "Areascan");
+    assert_eq!(cam.read::<String>("PixelFormat").unwrap(), "Mono8");
+
+    cam.write::<String>("DeviceScanType", "Linescan3D".to_string()).unwrap();
+    assert_eq!(cam.read::<String>("PixelFormat").unwrap(), "Coord3D_C16");
+    let entries = cam.feature_info("PixelFormat").unwrap().entries.unwrap();
+    let available: Vec<&str> = entries.iter().filter(|e| e.available).map(|e| e.name.as_str()).collect();
+    assert_eq!(available, ["Coord3D_C16"]);
+    assert!(cam.write::<String>("PixelFormat", "Mono16".to_string()).is_err());
+    assert_eq!(cam.read::<String>("PixelFormat").unwrap(), "Coord3D_C16");
+
+    cam.write::<String>("DeviceScanType", "Areascan".to_string()).unwrap();
+    assert_eq!(cam.read::<String>("PixelFormat").unwrap(), "Mono8");
+    assert!(cam.write::<String>("PixelFormat", "Coord3D_C16".to_string()).is_err());
+}
+
+/// `Scan3dCoordinateScale`/`Offset` report the fixed calibration of the coordinate the selector
+/// picks, as an SFNC 3D camera does.
+#[test]
+fn scan3d_coordinates_follow_their_selector() {
+    let camera = fake_camera(FakeCameraConfig::default());
+    let cam = Camera::connect_addr(camera.local_addr()).unwrap();
+    for (coordinate, scale) in [("CoordinateA", 0.05), ("CoordinateB", 0.1), ("CoordinateC", 0.001)] {
+        cam.write::<String>("Scan3dCoordinateSelector", coordinate.to_string()).unwrap();
+        assert_eq!(cam.read::<f64>("Scan3dCoordinateScale").unwrap(), scale, "{coordinate}");
+        assert_eq!(cam.read::<f64>("Scan3dCoordinateOffset").unwrap(), 0.0, "{coordinate}");
+    }
+    assert_eq!(cam.feature_info("Scan3dCoordinateScale").unwrap().unit.as_deref(), Some("mm"));
+}
+
+/// A Linescan3D frame is two bytes per value, and its profiles carry the laser shadow's zeros
+/// next to valid heights.
+#[test]
+fn linescan3d_streams_two_byte_profiles() {
+    let camera = fake_camera(FakeCameraConfig {
+        frame_period: Duration::from_millis(15),
+        ..Default::default()
+    });
+    camera.poke_register(feature::WIDTH, 100);
+    camera.poke_register(feature::HEIGHT, 500);
+    camera.poke_register(feature::ACQUISITION_ACTIVE, 1);
+
+    let cam = Camera::connect_addr(camera.local_addr()).unwrap();
+    cam.write::<String>("DeviceScanType", "Linescan3D".to_string()).unwrap();
+    assert_eq!(cam.read::<i64>("PayloadSize").unwrap(), 100 * 500 * 2);
+
+    let (tx, rx) = std::sync::mpsc::channel();
+    let stream = cam
+        .start_stream(move |buffer: Buffer| {
+            let _ = tx.send(buffer);
+        })
+        .unwrap();
+    let buf = rx.recv_timeout(Duration::from_secs(3)).expect("expected a frame");
+    cam.stop_stream(stream).unwrap();
+
+    assert_eq!(buf.status, BufferStatus::Success);
+    assert_eq!(buf.data().len(), 100 * 500 * 2);
+    let values: Vec<u16> = buf.data().chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect();
+    assert!(values.iter().all(|&z| z == 0 || (9_000..=33_000).contains(&z)));
+    assert!(values.iter().any(|&z| z > 9_000));
+}
+
 /// `start_stream_with_config` must actually apply the caller's packet size to the device
 /// (`GevSCPSPacketSize`, not the hardcoded convenience default), and streaming must still work
 /// end-to-end with it.

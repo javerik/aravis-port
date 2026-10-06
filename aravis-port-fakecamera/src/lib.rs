@@ -23,7 +23,7 @@ use gvcp_server::SharedState;
 use registers::{Identity, RegisterBank};
 
 pub use gvsp_server::{CHUNK_ID_FRAME_ID, CHUNK_ID_IMAGE, CHUNK_MODE_EXTRA_BYTES};
-pub use registers::{feature, pixel_format, REGISTER_SPACE_SIZE};
+pub use registers::{feature, pixel_format, scan_type, REGISTER_SPACE_SIZE};
 
 /// Configuration for a simulated camera.
 #[derive(Debug, Clone)]

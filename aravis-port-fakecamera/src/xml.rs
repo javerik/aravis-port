@@ -7,6 +7,10 @@
 //! The region (`OffsetX`/`OffsetY` against `WidthMax`/`HeightMax`) follows the SFNC shape, with
 //! each size's max shrinking by its offset and the other way round. The transport features
 //! (`GevSCPSPacketSize` and its flag bits) map the standard bootstrap register, as camera XMLs do.
+//! `DeviceScanType` switches between area scan and a C6-like `Linescan3D`, whose only
+//! `PixelFormat` is `Coord3D_C16`. The entries say so through `pIsAvailable`, and the device
+//! refuses the others (see `gvcp_server`). The `Scan3dCoordinate*` features report a fixed
+//! calibration per coordinate.
 
 use crate::registers::feature;
 
@@ -15,6 +19,7 @@ pub fn minimal_genicam_xml() -> Vec<u8> {
         r#"<?xml version="1.0" encoding="utf-8"?>
 <RegisterDescription xmlns="http://www.genicam.org/GenApi/Version_1_1" ModelName="FakeCamera" VendorName="aravis-port" SchemaMajorVersion="1" SchemaMinorVersion="1" SchemaSubMinorVersion="0">
   <Category Name="Root">
+    <pFeature>DeviceScanType</pFeature>
     <pFeature>Width</pFeature>
     <pFeature>Height</pFeature>
     <pFeature>PixelFormat</pFeature>
@@ -32,7 +37,14 @@ pub fn minimal_genicam_xml() -> Vec<u8> {
     <pFeature>OffsetY</pFeature>
     <pFeature>WidthMax</pFeature>
     <pFeature>HeightMax</pFeature>
+    <pFeature>Scan3dControl</pFeature>
     <pFeature>TransportLayerControl</pFeature>
+  </Category>
+
+  <Category Name="Scan3dControl">
+    <pFeature>Scan3dCoordinateSelector</pFeature>
+    <pFeature>Scan3dCoordinateScale</pFeature>
+    <pFeature>Scan3dCoordinateOffset</pFeature>
   </Category>
 
   <Category Name="TransportLayerControl">
@@ -174,11 +186,64 @@ pub fn minimal_genicam_xml() -> Vec<u8> {
     <Endianess>BigEndian</Endianess>
   </IntReg>
   <Enumeration Name="PixelFormat">
-    <EnumEntry Name="Mono8"><Value>1</Value></EnumEntry>
-    <EnumEntry Name="Mono10"><Value>2</Value></EnumEntry>
-    <EnumEntry Name="Mono16"><Value>3</Value></EnumEntry>
+    <EnumEntry Name="Mono8"><pIsAvailable>IsAreascan</pIsAvailable><Value>1</Value></EnumEntry>
+    <EnumEntry Name="Mono10"><pIsAvailable>IsAreascan</pIsAvailable><Value>2</Value></EnumEntry>
+    <EnumEntry Name="Mono16"><pIsAvailable>IsAreascan</pIsAvailable><Value>3</Value></EnumEntry>
+    <EnumEntry Name="Coord3D_C16"><pIsAvailable>IsLinescan3D</pIsAvailable><Value>4</Value></EnumEntry>
     <pValue>PixelFormatReg</pValue>
   </Enumeration>
+
+  <IntReg Name="DeviceScanTypeReg">
+    <Address>0x{scan_type_addr:x}</Address>
+    <Length>4</Length>
+    <AccessMode>RW</AccessMode>
+    <Sign>Unsigned</Sign>
+    <Endianess>BigEndian</Endianess>
+  </IntReg>
+  <Enumeration Name="DeviceScanType">
+    <pIsLocked>TLParamsLocked</pIsLocked>
+    <EnumEntry Name="Areascan"><Value>0</Value></EnumEntry>
+    <EnumEntry Name="Linescan3D"><Value>1</Value></EnumEntry>
+    <pValue>DeviceScanTypeReg</pValue>
+  </Enumeration>
+  <IntSwissKnife Name="IsAreascan">
+    <pVariable Name="S">DeviceScanTypeReg</pVariable>
+    <Formula>S = 0</Formula>
+  </IntSwissKnife>
+  <IntSwissKnife Name="IsLinescan3D">
+    <pVariable Name="S">DeviceScanTypeReg</pVariable>
+    <Formula>S = 1</Formula>
+  </IntSwissKnife>
+
+  <IntReg Name="Scan3dCoordinateSelectorReg">
+    <Address>0x{scan3d_selector_addr:x}</Address>
+    <Length>4</Length>
+    <AccessMode>RW</AccessMode>
+    <Sign>Unsigned</Sign>
+    <Endianess>BigEndian</Endianess>
+  </IntReg>
+  <Enumeration Name="Scan3dCoordinateSelector">
+    <pSelected>Scan3dCoordinateScale</pSelected>
+    <pSelected>Scan3dCoordinateOffset</pSelected>
+    <EnumEntry Name="CoordinateA"><Value>0</Value></EnumEntry>
+    <EnumEntry Name="CoordinateB"><Value>1</Value></EnumEntry>
+    <EnumEntry Name="CoordinateC"><Value>2</Value></EnumEntry>
+    <pValue>Scan3dCoordinateSelectorReg</pValue>
+  </Enumeration>
+  <SwissKnife Name="Scan3dCoordinateScaleValue">
+    <pVariable Name="S">Scan3dCoordinateSelectorReg</pVariable>
+    <Formula>S = 0 ? 0.05 : (S = 1 ? 0.1 : 0.001)</Formula>
+  </SwissKnife>
+  <Float Name="Scan3dCoordinateScale">
+    <ImposedAccessMode>RO</ImposedAccessMode>
+    <pValue>Scan3dCoordinateScaleValue</pValue>
+    <Unit>mm</Unit>
+  </Float>
+  <Float Name="Scan3dCoordinateOffset">
+    <ImposedAccessMode>RO</ImposedAccessMode>
+    <Value>0</Value>
+    <Unit>mm</Unit>
+  </Float>
 
   <IntReg Name="ExposureTimeReg">
     <Address>0x{exposure_addr:x}</Address>
@@ -332,6 +397,8 @@ pub fn minimal_genicam_xml() -> Vec<u8> {
         reverse_x_addr = feature::REVERSE_X,
         offset_x_addr = feature::OFFSET_X,
         offset_y_addr = feature::OFFSET_Y,
+        scan_type_addr = feature::DEVICE_SCAN_TYPE,
+        scan3d_selector_addr = feature::SCAN3D_COORDINATE_SELECTOR,
         chunk_id_frame_id = crate::gvsp_server::CHUNK_ID_FRAME_ID,
         chunk_extra_bytes = crate::gvsp_server::CHUNK_MODE_EXTRA_BYTES,
     )
@@ -366,6 +433,11 @@ mod tests {
             "GevSCPSPacketSize",
             "GevSCPSDoNotFragment",
             "GevSCPSFireTestPacket",
+            "DeviceScanType",
+            "Coord3D_C16",
+            "Scan3dCoordinateSelector",
+            "Scan3dCoordinateScale",
+            "Scan3dCoordinateOffset",
         ] {
             assert!(xml.contains(&format!("Name=\"{name}\"")), "missing feature {name}");
         }

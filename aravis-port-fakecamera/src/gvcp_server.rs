@@ -10,12 +10,15 @@ use aravis_port_core::gvcp::{
     WriteRegisterAck, WriteRegisterCmd, HEADER_LEN,
 };
 
-use crate::registers::{feature, RegisterBank};
+use crate::registers::{default_pixel_format, feature, pixel_format_allowed, RegisterBank};
 
 /// GVCP error code returned for writes from a non-controller client. Our own choice — not
 /// necessarily the official GEV error code, since this is a simulator, not a spec-compliance
 /// reference.
 const ERROR_WRITE_ACCESS_DENIED: u8 = 0x06;
+/// GVCP error code for a value the device won't take in its current state: a `PixelFormat` the
+/// current `DeviceScanType` doesn't stream. Numbered like Aravis's `ArvGvcpError`.
+const ERROR_INVALID_PARAMETER: u8 = 0x02;
 
 pub(crate) struct SharedState {
     pub bank: RegisterBank,
@@ -106,6 +109,10 @@ fn handle_packet(
                 send_error(socket, from, &header, ERROR_WRITE_ACCESS_DENIED);
                 return;
             }
+            if refuses_write(&state.bank, cmd.address, &cmd.value.to_be_bytes()) {
+                send_error(socket, from, &header, ERROR_INVALID_PARAMETER);
+                return;
+            }
             if cmd.address == offset::CONTROL_CHANNEL_PRIVILEGE {
                 if RegisterBank::has_control_flags(cmd.value) {
                     state.controller = Some(from);
@@ -143,6 +150,10 @@ fn handle_packet(
                 send_error(socket, from, &header, ERROR_WRITE_ACCESS_DENIED);
                 return;
             }
+            if refuses_write(&state.bank, cmd.address, &cmd.data) {
+                send_error(socket, from, &header, ERROR_INVALID_PARAMETER);
+                return;
+            }
             state.bank.write(cmd.address, &cmd.data);
             after_write(&mut state, cmd.address, cmd.data.len());
             touch_heartbeat_if_controller(&mut state, from, heartbeat_timeout);
@@ -166,9 +177,40 @@ fn handle_packet(
 
 /// Side effects of a register write covering `[address, address + len)`: a set
 /// `GevSCPSFireTestPacket` bit sends one test packet and clears itself, as on a real device.
+/// Whether the device turns down writing `data` at `address`: a `PixelFormat` the scan mode
+/// (the one in the same write, if it sets both) doesn't stream.
+fn refuses_write(bank: &RegisterBank, address: u32, data: &[u8]) -> bool {
+    let Some(pixel_format) = written_u32(address, data, feature::PIXEL_FORMAT) else {
+        return false;
+    };
+    let scan = written_u32(address, data, feature::DEVICE_SCAN_TYPE)
+        .unwrap_or_else(|| bank.read_u32(feature::DEVICE_SCAN_TYPE));
+    !pixel_format_allowed(scan, pixel_format)
+}
+
+/// The big-endian `u32` that writing `data` at `address` puts into `register`, if the write
+/// covers all four of its bytes.
+fn written_u32(address: u32, data: &[u8], register: u32) -> Option<u32> {
+    let start = register.checked_sub(address)? as usize;
+    let bytes = data.get(start..start.checked_add(4)?)?;
+    Some(u32::from_be_bytes(bytes.try_into().ok()?))
+}
+
+fn covers(address: u32, len: usize, register: u32) -> bool {
+    (address..address.saturating_add(len as u32)).contains(&register)
+}
+
 fn after_write(state: &mut SharedState, address: u32, len: usize) {
+    // A new scan mode brings its own pixel formats; the device moves onto one by itself.
+    if covers(address, len, feature::DEVICE_SCAN_TYPE) {
+        let scan = state.bank.read_u32(feature::DEVICE_SCAN_TYPE);
+        if !pixel_format_allowed(scan, state.bank.read_u32(feature::PIXEL_FORMAT)) {
+            state.bank.write_u32(feature::PIXEL_FORMAT, default_pixel_format(scan));
+        }
+    }
+
     let register = offset::STREAM_CHANNEL_0_PACKET_SIZE;
-    if !(address..address.saturating_add(len as u32)).contains(&register) {
+    if !covers(address, len, register) {
         return;
     }
     let value = state.bank.read_u32(register);
@@ -265,4 +307,52 @@ fn send_error(socket: &UdpSocket, to: SocketAddr, req: &GvcpHeader, code: u8) {
         id: req.id,
     };
     let _ = socket.send_to(&header.to_bytes(), to);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::registers::{pixel_format, scan_type, Identity};
+
+    fn bank(scan: u32) -> RegisterBank {
+        let identity = Identity {
+            manufacturer: "aravis-port".into(),
+            model: "FakeCamera".into(),
+            version: "0.1".into(),
+            serial: "0001".into(),
+            mac: aravis_port_core::MacAddress::new([0, 0x11, 0x22, 0x33, 0x44, 0x55]),
+            current_ip: Ipv4Addr::LOCALHOST,
+        };
+        let mut bank = RegisterBank::new(&identity, vec![]);
+        bank.write_u32(feature::DEVICE_SCAN_TYPE, scan);
+        bank
+    }
+
+    #[test]
+    fn a_pixel_format_outside_the_scan_mode_is_refused() {
+        let line = bank(scan_type::LINESCAN3D);
+        assert!(refuses_write(&line, feature::PIXEL_FORMAT, &pixel_format::MONO16.to_be_bytes()));
+        assert!(!refuses_write(&line, feature::PIXEL_FORMAT, &pixel_format::COORD3D_C16.to_be_bytes()));
+        let area = bank(scan_type::AREASCAN);
+        assert!(refuses_write(&area, feature::PIXEL_FORMAT, &pixel_format::COORD3D_C16.to_be_bytes()));
+        assert!(!refuses_write(&area, feature::PIXEL_FORMAT, &pixel_format::MONO8.to_be_bytes()));
+    }
+
+    #[test]
+    fn other_registers_and_partial_writes_are_not_judged() {
+        let line = bank(scan_type::LINESCAN3D);
+        assert!(!refuses_write(&line, feature::WIDTH, &7u32.to_be_bytes()));
+        assert!(!refuses_write(&line, feature::PIXEL_FORMAT + 2, &[0, 1]));
+    }
+
+    #[test]
+    fn a_write_covering_both_registers_is_judged_by_its_own_scan_type() {
+        // DEVICE_SCAN_TYPE lies past PIXEL_FORMAT; one memory write spanning both.
+        let start = feature::PIXEL_FORMAT;
+        let mut data = vec![0u8; (feature::DEVICE_SCAN_TYPE + 4 - start) as usize];
+        data[..4].copy_from_slice(&pixel_format::COORD3D_C16.to_be_bytes());
+        let at = (feature::DEVICE_SCAN_TYPE - start) as usize;
+        data[at..at + 4].copy_from_slice(&scan_type::LINESCAN3D.to_be_bytes());
+        assert!(!refuses_write(&bank(scan_type::AREASCAN), start, &data));
+    }
 }

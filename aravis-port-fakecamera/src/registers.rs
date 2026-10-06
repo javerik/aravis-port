@@ -28,6 +28,12 @@ pub mod feature {
     /// generated for the region's size alone.
     pub const OFFSET_X: u32 = 0x12c;
     pub const OFFSET_Y: u32 = 0x130;
+    /// `DeviceScanType`: [`super::scan_type`]. Switching it moves `PixelFormat` onto a format
+    /// the new mode offers, the way a 3D profiler such as the AT C6 does.
+    pub const DEVICE_SCAN_TYPE: u32 = 0x134;
+    /// `Scan3dCoordinateSelector` (0/1/2 = CoordinateA/B/C). Only stored; it selects which
+    /// constant `Scan3dCoordinateScale`/`Scan3dCoordinateOffset` report.
+    pub const SCAN3D_COORDINATE_SELECTOR: u32 = 0x138;
 }
 
 /// PixelFormat register values understood by the built-in fake-camera GenICam XML.
@@ -35,6 +41,35 @@ pub mod pixel_format {
     pub const MONO8: u32 = 1;
     pub const MONO10: u32 = 2;
     pub const MONO16: u32 = 3;
+    /// A 16-bit range (z) image, offered only in [`super::scan_type::LINESCAN3D`].
+    pub const COORD3D_C16: u32 = 4;
+}
+
+/// `DeviceScanType` register values.
+pub mod scan_type {
+    pub const AREASCAN: u32 = 0;
+    /// Every frame is a stack of laser profiles: one row per profile, the value the height.
+    pub const LINESCAN3D: u32 = 1;
+}
+
+/// Whether the device takes `PixelFormat = pixel_format` in scan mode `scan`: Linescan3D
+/// streams nothing but `Coord3D_C16`, and area scan everything else. A device refuses the
+/// others even though the GenICam client writes any entry it is asked to.
+pub(crate) fn pixel_format_allowed(scan: u32, pixel_format: u32) -> bool {
+    match scan {
+        scan_type::LINESCAN3D => pixel_format == pixel_format::COORD3D_C16,
+        scan_type::AREASCAN => pixel_format != pixel_format::COORD3D_C16,
+        _ => true,
+    }
+}
+
+/// The format a switch into scan mode `scan` leaves the device in.
+pub(crate) fn default_pixel_format(scan: u32) -> u32 {
+    if scan == scan_type::LINESCAN3D {
+        pixel_format::COORD3D_C16
+    } else {
+        pixel_format::MONO8
+    }
 }
 
 /// The fake camera's register bank plus served XML blob, addressed as one flat space.
@@ -94,6 +129,8 @@ impl RegisterBank {
         write_u32(&mut registers, feature::REVERSE_X, 0);
         write_u32(&mut registers, feature::OFFSET_X, 0);
         write_u32(&mut registers, feature::OFFSET_Y, 0);
+        write_u32(&mut registers, feature::DEVICE_SCAN_TYPE, scan_type::AREASCAN);
+        write_u32(&mut registers, feature::SCAN3D_COORDINATE_SELECTOR, 0);
 
         Self { registers, xml }
     }
@@ -196,6 +233,30 @@ mod tests {
         let mut bank = RegisterBank::new(&test_identity(), vec![1, 2, 3]);
         bank.write(REGISTER_SPACE_SIZE as u32, &[9, 9, 9]);
         assert_eq!(bank.read(REGISTER_SPACE_SIZE as u32, 3), vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn each_scan_type_takes_only_its_own_pixel_formats() {
+        use pixel_format::*;
+        for pf in [MONO8, MONO10, MONO16] {
+            assert!(pixel_format_allowed(scan_type::AREASCAN, pf));
+            assert!(!pixel_format_allowed(scan_type::LINESCAN3D, pf));
+        }
+        assert!(pixel_format_allowed(scan_type::LINESCAN3D, COORD3D_C16));
+        assert!(!pixel_format_allowed(scan_type::AREASCAN, COORD3D_C16));
+    }
+
+    #[test]
+    fn a_scan_type_switch_lands_on_a_format_the_mode_takes() {
+        for scan in [scan_type::AREASCAN, scan_type::LINESCAN3D] {
+            assert!(pixel_format_allowed(scan, default_pixel_format(scan)));
+        }
+    }
+
+    #[test]
+    fn power_on_is_area_scan() {
+        let bank = RegisterBank::new(&test_identity(), vec![]);
+        assert_eq!(bank.read_u32(feature::DEVICE_SCAN_TYPE), scan_type::AREASCAN);
     }
 
     #[test]
