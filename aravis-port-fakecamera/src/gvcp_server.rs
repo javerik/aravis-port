@@ -24,6 +24,7 @@ pub(crate) struct SharedState {
     pub packet_size: u16,
     pub path_mtu: u16,
     pub test_packets: bool,
+    pub resend_unavailable: bool,
 }
 
 pub(crate) fn spawn(
@@ -224,6 +225,10 @@ fn handle_resend(state: &SharedState, body: &[u8], extended: bool) {
     // validate the sender's source port, so there's no need to share the GVSP sender's socket
     // (and thus no cross-thread synchronization needed for this rare, low-volume path).
     let Ok(socket) = UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0)) else { return };
+    if state.resend_unavailable {
+        crate::gvsp_server::send_unavailable(&socket, dest, frame_id, first, last);
+        return;
+    }
     crate::gvsp_server::resend_packets(
         &socket,
         dest,

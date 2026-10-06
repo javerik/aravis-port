@@ -109,14 +109,45 @@ fn now_ns() -> u64 {
 }
 
 fn send_gvsp(socket: &UdpSocket, dest: SocketAddrV4, frame_id: u64, content_type: ContentType, packet_id: u32, payload: &[u8]) {
+    send_gvsp_with_status(socket, dest, GvspStatus::Success, frame_id, content_type, packet_id, payload);
+}
+
+fn send_gvsp_with_status(
+    socket: &UdpSocket,
+    dest: SocketAddrV4,
+    status: GvspStatus,
+    frame_id: u64,
+    content_type: ContentType,
+    packet_id: u32,
+    payload: &[u8],
+) {
     let header = GvspHeader::Standard {
         frame_id: frame_id as u16,
         content_type,
         packet_id,
     };
-    let mut packet = header.to_bytes(GvspStatus::Success);
+    let mut packet = header.to_bytes(status);
     packet.extend_from_slice(payload);
     let _ = socket.send_to(&packet, dest);
+}
+
+/// GEV_STATUS_PACKET_UNAVAILABLE: the requested packet is no longer in the device's send buffer.
+const STATUS_PACKET_UNAVAILABLE: u16 = 0x800c;
+
+/// Answer a resend of packets `first..=last` with one data-less "packet unavailable" error
+/// packet each, as a device does once it has dropped them.
+pub(crate) fn send_unavailable(socket: &UdpSocket, dest: SocketAddrV4, frame_id: u64, first: u32, last: u32) {
+    for packet_id in first..=last {
+        send_gvsp_with_status(
+            socket,
+            dest,
+            GvspStatus::Error(STATUS_PACKET_UNAVAILABLE),
+            frame_id,
+            ContentType::Payload,
+            packet_id,
+            &[],
+        );
+    }
 }
 
 /// Builds every packet (content type, packet id, payload bytes) that make up a frame. Pure

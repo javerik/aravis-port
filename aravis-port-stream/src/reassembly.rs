@@ -119,9 +119,14 @@ impl FrameAssembly {
     fn ingest(&mut self, status: GvspStatus, header: &GvspHeader, payload: &[u8], now: Instant, cfg: &StreamConfig) {
         self.last_packet_time = now;
         if status.is_error() {
-            // Some error statuses (packet already evicted from the device's send buffer, etc.)
-            // mean requesting a resend would never succeed — stop trying for this frame.
+            // Typically a resend answered with "packet unavailable" (already evicted from the
+            // device's send buffer): requesting it again would never succeed, so stop trying for
+            // this frame. Such a packet carries no data, so it must not fill its slot either —
+            // counting it as received would close the frame as complete with a gap or a short
+            // tail (seen on the live C6 at 7960 when the last payload packet was lost). The frame
+            // closes as MissingPackets instead, as in Aravis, which skips error packets entirely.
             self.disable_resend = true;
+            return;
         }
 
         let packet_id = header.packet_id() as usize;
@@ -648,6 +653,70 @@ mod tests {
         assert_eq!(closed[0].status, aravis_port_core::memory::BufferStatus::Success);
         assert_eq!(closed[0].data(), b"AAAABBBB");
         assert_eq!(closed[0].image.unwrap().width, 4);
+    }
+
+    #[test]
+    fn an_unavailable_packet_does_not_complete_the_frame() {
+        // The last payload packet is lost and the device answers the resend with an error
+        // packet and no data. The frame must not close as Success one packet short.
+        let cfg = StreamConfig {
+            packet_size: 40,
+            initial_packet_timeout: std::time::Duration::from_millis(0),
+            ..StreamConfig::default()
+        };
+        let mut reassembler = Reassembler::new(cfg);
+        let (_user, stream) = new_buffer_pool(4, 64);
+        let mut requester = MockRequester { requests: Vec::new() };
+        let now = Instant::now();
+
+        let leader = leader_bytes(true);
+        reassembler.process_packet(GvspStatus::Success, header(1, ContentType::Leader, 0), &leader, &stream, &mut requester, now);
+        reassembler.process_packet(GvspStatus::Success, header(1, ContentType::Payload, 1), b"AAAA", &stream, &mut requester, now);
+        let trailer = trailer_bytes();
+        let closed = reassembler.process_packet(GvspStatus::Success, header(1, ContentType::Trailer, 3), &trailer, &stream, &mut requester, now);
+        assert!(closed.is_empty());
+        let later = now + std::time::Duration::from_millis(5);
+        reassembler.tick(&mut requester, later);
+        assert_eq!(requester.requests.len(), 1);
+
+        let closed = reassembler.process_packet(GvspStatus::Error(0x800c), header(1, ContentType::Payload, 2), &[], &stream, &mut requester, later);
+        assert!(closed.is_empty(), "closed {:?}", closed.iter().map(|b| b.status).collect::<Vec<_>>());
+
+        // No further resend for it (past the packet timeout, within the frame retention), and
+        // two newer frames supersede it as incomplete.
+        let later = later + std::time::Duration::from_millis(30);
+        assert!(reassembler.tick(&mut requester, later).is_empty());
+        assert_eq!(requester.requests.len(), 1);
+        reassembler.process_packet(GvspStatus::Success, header(2, ContentType::Leader, 0), &leader, &stream, &mut requester, later);
+        let closed = reassembler.process_packet(GvspStatus::Success, header(3, ContentType::Leader, 0), &leader, &stream, &mut requester, later);
+        assert_eq!(closed.len(), 1);
+        assert_eq!(closed[0].frame_id, 1);
+        assert_eq!(closed[0].status, aravis_port_core::memory::BufferStatus::MissingPackets);
+    }
+
+    #[test]
+    fn an_unavailable_last_block_does_not_complete_a_multipart_frame() {
+        // The live C6 (multi-part, extended ids) answered a resend of its last block with an
+        // error packet typed as a plain payload packet. Placed at the generic stride, it padded
+        // the frame to 396 * 7912 = 3133152 bytes of a 3072x1020 image and closed it as Success.
+        let mut reassembler = Reassembler::new(StreamConfig::default());
+        let (_user, stream) = new_buffer_pool(4, 8);
+        let mut requester = MockRequester { requests: Vec::new() };
+        let now = Instant::now();
+
+        let leader = multipart_leader_bytes(4, 2);
+        reassembler.process_packet(GvspStatus::Success, header(1, ContentType::Leader, 0), &leader, &stream, &mut requester, now);
+        let first = multipart_block(0, b"AAAA");
+        reassembler.process_packet(GvspStatus::Success, header(1, ContentType::Multipart, 1), &first, &stream, &mut requester, now);
+        let trailer = trailer_bytes();
+        reassembler.process_packet(GvspStatus::Success, header(1, ContentType::Trailer, 3), &trailer, &stream, &mut requester, now);
+        let closed = reassembler.process_packet(GvspStatus::Error(0x800c), header(1, ContentType::Payload, 2), &[], &stream, &mut requester, now);
+        assert!(closed.is_empty(), "closed {:?}", closed.iter().map(|b| (b.status, b.data().len())).collect::<Vec<_>>());
+
+        let later = now + StreamConfig::default().frame_retention;
+        let closed = reassembler.tick(&mut requester, later);
+        assert_eq!(closed.len(), 1);
+        assert_eq!(closed[0].status, aravis_port_core::memory::BufferStatus::MissingPackets);
     }
 
     #[test]

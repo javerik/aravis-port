@@ -44,6 +44,9 @@ pub struct FakeCameraConfig {
     pub path_mtu: u16,
     /// Whether test packets are sent at all. `false` models a device without support for them.
     pub test_packets: bool,
+    /// Answer every packet-resend request with "packet unavailable" error packets (no data)
+    /// instead of the packets, like a device whose send buffer already dropped them.
+    pub resend_unavailable: bool,
     /// Independent per-packet drop probability (0.0-1.0), applied to each leader/payload/trailer
     /// packet, to drive packet-resend tests.
     pub gvsp_loss_probability: f64,
@@ -62,6 +65,7 @@ impl Default for FakeCameraConfig {
             packet_size: 1500,
             path_mtu: 9000,
             test_packets: true,
+            resend_unavailable: false,
             gvsp_loss_probability: 0.0,
         }
     }
@@ -114,6 +118,7 @@ impl FakeCamera {
             packet_size: cfg.packet_size,
             path_mtu: cfg.path_mtu,
             test_packets: cfg.test_packets,
+            resend_unavailable: cfg.resend_unavailable,
         }));
 
         let (gvcp_stop_tx, gvcp_join) = gvcp_server::spawn(socket, shared.clone(), cfg.heartbeat_timeout);
