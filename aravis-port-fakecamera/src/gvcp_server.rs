@@ -3,7 +3,7 @@ use std::sync::{mpsc, Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
-use aravis_port_core::bootstrap::offset;
+use aravis_port_core::bootstrap::{offset, stream_packet_size};
 use aravis_port_core::gvcp::{
     Command, GvcpHeader, GvcpPayload, PacketFlags, PacketResend, PacketType, ReadMemoryAck,
     ReadMemoryCmd, ReadRegisterAck, ReadRegisterCmd, WriteMemoryAck, WriteMemoryCmd,
@@ -22,6 +22,8 @@ pub(crate) struct SharedState {
     pub controller: Option<SocketAddr>,
     pub heartbeat_deadline: Instant,
     pub packet_size: u16,
+    pub path_mtu: u16,
+    pub test_packets: bool,
 }
 
 pub(crate) fn spawn(
@@ -112,6 +114,7 @@ fn handle_packet(
                 }
             }
             state.bank.write_u32(cmd.address, cmd.value);
+            after_write(&mut state, cmd.address, 4);
             touch_heartbeat_if_controller(&mut state, from, heartbeat_timeout);
             send_ack(
                 socket,
@@ -140,6 +143,7 @@ fn handle_packet(
                 return;
             }
             state.bank.write(cmd.address, &cmd.data);
+            after_write(&mut state, cmd.address, cmd.data.len());
             touch_heartbeat_if_controller(&mut state, from, heartbeat_timeout);
             send_ack(
                 socket,
@@ -156,6 +160,36 @@ fn handle_packet(
             handle_resend(&state, body, extended);
         }
         _ => {}
+    }
+}
+
+/// Side effects of a register write covering `[address, address + len)`: a set
+/// `GevSCPSFireTestPacket` bit sends one test packet and clears itself, as on a real device.
+fn after_write(state: &mut SharedState, address: u32, len: usize) {
+    let register = offset::STREAM_CHANNEL_0_PACKET_SIZE;
+    if !(address..address.saturating_add(len as u32)).contains(&register) {
+        return;
+    }
+    let value = state.bank.read_u32(register);
+    if value & stream_packet_size::FIRE_TEST_PACKET == 0 {
+        return;
+    }
+    state.bank.write_u32(register, value & !stream_packet_size::FIRE_TEST_PACKET);
+
+    let size = (value & stream_packet_size::SIZE_MASK) as u16;
+    if !state.test_packets || size > state.path_mtu {
+        return;
+    }
+    let dest_ip = Ipv4Addr::from(state.bank.read_u32(offset::STREAM_CHANNEL_0_IP));
+    let port = (state.bank.read_u32(offset::STREAM_CHANNEL_0_PORT) & 0xffff) as u16;
+    if dest_ip.is_unspecified() || port == 0 {
+        return;
+    }
+    // The whole datagram is `size` bytes, so the UDP payload is what's left after the IP (20)
+    // and UDP (8) headers. Real devices fill it from an LFSR; any bytes do here.
+    let payload: Vec<u8> = (0..(size as usize).saturating_sub(20 + 8)).map(|i| i as u8).collect();
+    if let Ok(socket) = UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0)) {
+        let _ = socket.send_to(&payload, SocketAddrV4::new(dest_ip, port));
     }
 }
 

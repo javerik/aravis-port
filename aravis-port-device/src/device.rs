@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use aravis_port_core::bootstrap::{control_channel_privilege, offset};
+use aravis_port_core::bootstrap::{control_channel_privilege, offset, stream_packet_size};
 use aravis_port_core::{Error, Result};
 use aravis_port_core::memory::Buffer;
 use aravis_port_genicam::{ChunkDataAccess, FeatureInfo, GenApiTree};
@@ -112,19 +112,48 @@ impl Device {
     }
 
     /// Read `GevSCPSPacketSize`'s low 16 bits (the actual packet size; upper bits are
-    /// endianness/fragmentation/test-packet flags this crate doesn't set).
+    /// endianness/fragmentation/test-packet flags, see [`stream_packet_size`]).
     pub fn stream_packet_size(&self) -> Result<u16> {
-        Ok((self.read_register(offset::STREAM_CHANNEL_0_PACKET_SIZE)? & 0xffff) as u16)
+        Ok((self.read_register(offset::STREAM_CHANNEL_0_PACKET_SIZE)? & stream_packet_size::SIZE_MASK) as u16)
     }
 
-    /// Set `GevSCPSPacketSize`'s low 16 bits, preserving the current flag bits (29-31). A
-    /// device's power-on default can exceed the local interface's MTU once IP/UDP headers are
-    /// added (confirmed on the live C5-2040-GigE: default 1501 on a 1500-MTU link), so callers
-    /// should set a safely-under-MTU value before starting acquisition.
+    /// Set `GevSCPSPacketSize`'s low 16 bits, preserving the endianness and don't-fragment flags
+    /// (a set fire-test-packet bit is never written back, so this can't fire one). A device's
+    /// power-on default can exceed the local interface's MTU once IP/UDP headers are added
+    /// (confirmed on the live C5-2040-GigE: default 1501 on a 1500-MTU link), so callers should
+    /// set a value that fits before starting acquisition.
     pub fn set_stream_packet_size(&self, size: u16) -> Result<()> {
         let current = self.read_register(offset::STREAM_CHANNEL_0_PACKET_SIZE)?;
-        let new_value = (current & 0xffff_0000) | size as u32;
-        self.write_register(offset::STREAM_CHANNEL_0_PACKET_SIZE, new_value)
+        let flags = current & !(stream_packet_size::SIZE_MASK | stream_packet_size::FIRE_TEST_PACKET);
+        self.write_register(offset::STREAM_CHANNEL_0_PACKET_SIZE, flags | size as u32)
+    }
+
+    /// Whether stream packets go out with the IP "don't fragment" flag (`GevSCPSDoNotFragment`).
+    pub fn stream_do_not_fragment(&self) -> Result<bool> {
+        Ok(self.read_register(offset::STREAM_CHANNEL_0_PACKET_SIZE)? & stream_packet_size::DO_NOT_FRAGMENT != 0)
+    }
+
+    /// Set or clear `GevSCPSDoNotFragment`, keeping the packet size.
+    pub fn set_stream_do_not_fragment(&self, on: bool) -> Result<()> {
+        let current = self.read_register(offset::STREAM_CHANNEL_0_PACKET_SIZE)? & !stream_packet_size::FIRE_TEST_PACKET;
+        let value = if on {
+            current | stream_packet_size::DO_NOT_FRAGMENT
+        } else {
+            current & !stream_packet_size::DO_NOT_FRAGMENT
+        };
+        self.write_register(offset::STREAM_CHANNEL_0_PACKET_SIZE, value)
+    }
+
+    /// Program packet size `size` with "don't fragment" set and fire one test packet
+    /// (`GevSCPSFireTestPacket`) in the same write. The device sends it to the stream channel's
+    /// destination, so point that at a socket first with [`Device::open_stream_channel`]. It
+    /// arrives as a UDP payload of `size - 28` bytes (IP and UDP headers come off), or not at all
+    /// when a link on the way can't carry it. Only meaningful while not acquiring.
+    pub fn fire_test_packet(&self, size: u16) -> Result<()> {
+        let current = self.read_register(offset::STREAM_CHANNEL_0_PACKET_SIZE)?;
+        let flags = current & !(stream_packet_size::SIZE_MASK | stream_packet_size::FIRE_TEST_PACKET);
+        let value = flags | stream_packet_size::DO_NOT_FRAGMENT | stream_packet_size::FIRE_TEST_PACKET | size as u32;
+        self.write_register(offset::STREAM_CHANNEL_0_PACKET_SIZE, value)
     }
 
     /// Read a feature by name (`device.read::<f64>("ExposureTime")`).

@@ -73,6 +73,7 @@ impl RegisterBank {
         write_u32(&mut registers, offset::N_STREAM_CHANNELS, 1);
         write_u32(&mut registers, offset::HEARTBEAT_TIMEOUT, 3000);
         write_u32(&mut registers, offset::CONTROL_CHANNEL_PRIVILEGE, 0);
+        write_u32(&mut registers, offset::STREAM_CHANNEL_0_PACKET_SIZE, 1500);
 
         // XML URL: "Local:<name>;<hex address>;<hex size>" — address is the absolute (flat)
         // address where the XML blob starts, i.e. REGISTER_SPACE_SIZE.

@@ -76,7 +76,7 @@ fn run(
             Err(RecvTimeoutError::Timeout) => {}
         }
 
-        let (dest, width, height, pixel_format, active, chunk_mode, packet_size) = {
+        let (dest, width, height, pixel_format, active, chunk_mode, packet_size, path_mtu) = {
             let state = shared.lock().unwrap();
             let dest_ip = Ipv4Addr::from(state.bank.read_u32(offset::STREAM_CHANNEL_0_IP));
             // Port occupies the low 16 bits — matches `Device::open_stream_channel` and the
@@ -90,10 +90,12 @@ fn run(
                 state.bank.read_u32(feature::ACQUISITION_ACTIVE) != 0,
                 state.bank.read_u32(feature::CHUNK_MODE_ACTIVE) != 0,
                 negotiated_packet_size(&state.bank, packet_size),
+                state.path_mtu,
             )
         };
 
-        if !active || dest.ip().is_unspecified() || dest.port() == 0 {
+        // Packets bigger than the path MTU don't arrive, as on a real link.
+        if !active || dest.ip().is_unspecified() || dest.port() == 0 || packet_size > path_mtu {
             continue;
         }
 

@@ -14,6 +14,7 @@ aravis-port-core.workspace = true
 aravis-port-genicam.workspace = true
 aravis-port-device.workspace = true
 aravis-port-stream.workspace = true
+log.workspace = true
 
 [dev-dependencies]
 # Path-only (no version): a workspace-internal test fixture only, not needed by consumers of the

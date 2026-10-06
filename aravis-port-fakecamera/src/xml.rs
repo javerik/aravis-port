@@ -5,7 +5,8 @@
 //! frame-rate, trigger and reverse features mirror the C6-2040-GigE's bounds/lock shapes
 //! (`pMax`, `Unit`, `pIsLocked`) for `GenApiTree::feature_info`; the fake only stores them.
 //! The region (`OffsetX`/`OffsetY` against `WidthMax`/`HeightMax`) follows the SFNC shape, with
-//! each size's max shrinking by its offset and the other way round.
+//! each size's max shrinking by its offset and the other way round. The transport features
+//! (`GevSCPSPacketSize` and its flag bits) map the standard bootstrap register, as camera XMLs do.
 
 use crate::registers::feature;
 
@@ -31,7 +32,52 @@ pub fn minimal_genicam_xml() -> Vec<u8> {
     <pFeature>OffsetY</pFeature>
     <pFeature>WidthMax</pFeature>
     <pFeature>HeightMax</pFeature>
+    <pFeature>TransportLayerControl</pFeature>
   </Category>
+
+  <Category Name="TransportLayerControl">
+    <pFeature>GevSCPSPacketSize</pFeature>
+    <pFeature>GevSCPSDoNotFragment</pFeature>
+    <pFeature>GevSCPSFireTestPacket</pFeature>
+  </Category>
+
+  <MaskedIntReg Name="GevSCPSPacketSizeReg">
+    <Address>0x{packet_size_addr:x}</Address>
+    <Length>4</Length>
+    <AccessMode>RW</AccessMode>
+    <LSB>31</LSB>
+    <MSB>16</MSB>
+    <Sign>Unsigned</Sign>
+    <Endianess>BigEndian</Endianess>
+  </MaskedIntReg>
+  <Integer Name="GevSCPSPacketSize">
+    <pValue>GevSCPSPacketSizeReg</pValue>
+    <Min>576</Min>
+    <Max>9000</Max>
+    <Inc>4</Inc>
+    <Unit>B</Unit>
+  </Integer>
+  <MaskedIntReg Name="GevSCPSDoNotFragmentReg">
+    <Address>0x{packet_size_addr:x}</Address>
+    <Length>4</Length>
+    <AccessMode>RW</AccessMode>
+    <Bit>1</Bit>
+    <Endianess>BigEndian</Endianess>
+  </MaskedIntReg>
+  <Boolean Name="GevSCPSDoNotFragment">
+    <pValue>GevSCPSDoNotFragmentReg</pValue>
+  </Boolean>
+  <MaskedIntReg Name="GevSCPSFireTestPacketReg">
+    <Address>0x{packet_size_addr:x}</Address>
+    <Length>4</Length>
+    <AccessMode>RW</AccessMode>
+    <Bit>0</Bit>
+    <Endianess>BigEndian</Endianess>
+  </MaskedIntReg>
+  <Command Name="GevSCPSFireTestPacket">
+    <pValue>GevSCPSFireTestPacketReg</pValue>
+    <CommandValue>1</CommandValue>
+  </Command>
 
   <Integer Name="TLParamsLocked">
     <ImposedAccessMode>RW</ImposedAccessMode>
@@ -272,6 +318,7 @@ pub fn minimal_genicam_xml() -> Vec<u8> {
   </IntSwissKnife>
 </RegisterDescription>
 "#,
+        packet_size_addr = aravis_port_core::bootstrap::offset::STREAM_CHANNEL_0_PACKET_SIZE,
         width_addr = feature::WIDTH,
         height_addr = feature::HEIGHT,
         pixel_format_addr = feature::PIXEL_FORMAT,
@@ -316,6 +363,9 @@ mod tests {
             "OffsetY",
             "WidthMax",
             "HeightMax",
+            "GevSCPSPacketSize",
+            "GevSCPSDoNotFragment",
+            "GevSCPSFireTestPacket",
         ] {
             assert!(xml.contains(&format!("Name=\"{name}\"")), "missing feature {name}");
         }

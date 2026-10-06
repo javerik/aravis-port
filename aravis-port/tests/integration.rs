@@ -8,7 +8,7 @@ use std::time::Duration;
 use aravis_port::core::gvcp::{Command, DiscoveryAck, GvcpHeader, GvcpPayload, PacketType, HEADER_LEN};
 use aravis_port::memory::{BufferStatus, ChunkTlvIndex};
 use aravis_port::prelude::*;
-use aravis_port::{Device, DeviceConfig};
+use aravis_port::{Device, DeviceConfig, PacketSizeOutcome, PacketSizeSearch};
 use aravis_port_fakecamera::{feature, FakeCamera, FakeCameraConfig};
 
 fn fake_camera(cfg: FakeCameraConfig) -> FakeCamera {
@@ -149,6 +149,157 @@ fn camera_start_stream_with_config_uses_the_given_packet_size() {
     assert_eq!(buf.data().len(), 16 * 16);
     let packet_size_reg = camera.peek_register(aravis_port::core::bootstrap::offset::STREAM_CHANNEL_0_PACKET_SIZE) & 0xffff;
     assert_eq!(packet_size_reg, 900, "device's GevSCPSPacketSize should reflect the custom config, not the 1400 default");
+}
+
+const PACKET_SIZE_REG: u32 = aravis_port::core::bootstrap::offset::STREAM_CHANNEL_0_PACKET_SIZE;
+
+/// The fake camera's `GevSCPSPacketSize` grid.
+fn packet_size_grid(exit_early: bool) -> PacketSizeSearch {
+    PacketSizeSearch {
+        min: 576,
+        max: 9000,
+        inc: 4,
+        exit_early,
+    }
+}
+
+/// A test packet gets through up to the path MTU and not beyond, and the probe puts the packet
+/// size and flags back the way it found them.
+#[test]
+fn test_packet_size_passes_up_to_the_path_mtu() {
+    let camera = fake_camera(FakeCameraConfig {
+        path_mtu: 1500,
+        ..Default::default()
+    });
+    let cam = Camera::connect_addr(camera.local_addr()).unwrap();
+
+    assert!(cam.test_packet_size(576).unwrap());
+    assert!(cam.test_packet_size(1500).unwrap());
+    assert!(!cam.test_packet_size(1504).unwrap());
+    assert_eq!(camera.peek_register(PACKET_SIZE_REG), 1500, "size and flags must be restored");
+}
+
+/// The search finds the largest size on the grid that gets through, and programs it.
+#[test]
+fn auto_packet_size_finds_the_path_mtu() {
+    for (path_mtu, expected) in [(1500, 1500), (9000, 9000), (4003, 4000), (576, 576)] {
+        let camera = fake_camera(FakeCameraConfig {
+            path_mtu,
+            ..Default::default()
+        });
+        let cam = Camera::connect_addr(camera.local_addr()).unwrap();
+
+        let outcome = cam.auto_packet_size(&packet_size_grid(false)).unwrap();
+        assert_eq!(
+            outcome,
+            PacketSizeOutcome {
+                packet_size: expected,
+                previous: 1500,
+                test_packets: true
+            },
+            "path MTU {path_mtu}"
+        );
+        assert_eq!(cam.stream_packet_size().unwrap(), expected);
+        assert_eq!(camera.peek_register(PACKET_SIZE_REG), expected as u32, "don't-fragment must be restored");
+    }
+}
+
+/// With `exit_early`, a current size that works is kept even though a bigger one would too;
+/// one that doesn't work is replaced by the largest that does.
+#[test]
+fn auto_packet_size_exit_early_keeps_a_working_size() {
+    let camera = fake_camera(FakeCameraConfig {
+        path_mtu: 9000,
+        ..Default::default()
+    });
+    let cam = Camera::connect_addr(camera.local_addr()).unwrap();
+    let outcome = cam.auto_packet_size(&packet_size_grid(true)).unwrap();
+    assert_eq!(outcome.packet_size, 1500);
+
+    let camera = fake_camera(FakeCameraConfig {
+        packet_size: 3000,
+        path_mtu: 1500,
+        ..Default::default()
+    });
+    let cam = Camera::connect_addr(camera.local_addr()).unwrap();
+    let outcome = cam.auto_packet_size(&packet_size_grid(true)).unwrap();
+    assert_eq!((outcome.previous, outcome.packet_size), (3000, 1500));
+}
+
+/// The sizes tried are multiples of `inc`, not `min + k * inc`: with the live C6-S7-3070's bounds
+/// (Min 86, Inc 4, Max 7960) the search still reaches 7960 and 1500.
+#[test]
+fn auto_packet_size_searches_multiples_of_inc() {
+    for (path_mtu, expected) in [(9000, 7960), (1500, 1500)] {
+        let camera = fake_camera(FakeCameraConfig {
+            path_mtu,
+            ..Default::default()
+        });
+        let cam = Camera::connect_addr(camera.local_addr()).unwrap();
+        let search = PacketSizeSearch {
+            min: 86,
+            max: 7960,
+            inc: 4,
+            exit_early: false,
+        };
+        assert_eq!(cam.auto_packet_size(&search).unwrap().packet_size, expected, "path MTU {path_mtu}");
+    }
+}
+
+/// A device that never sends a test packet keeps its packet size, and says so.
+#[test]
+fn auto_packet_size_without_test_packets_keeps_the_size() {
+    let camera = fake_camera(FakeCameraConfig {
+        packet_size: 1400,
+        test_packets: false,
+        ..Default::default()
+    });
+    let cam = Camera::connect_addr(camera.local_addr()).unwrap();
+
+    let outcome = cam.auto_packet_size(&packet_size_grid(false)).unwrap();
+    assert_eq!(
+        outcome,
+        PacketSizeOutcome {
+            packet_size: 1400,
+            previous: 1400,
+            test_packets: false
+        }
+    );
+    assert_eq!(camera.peek_register(PACKET_SIZE_REG), 1400);
+}
+
+/// A size found by the search streams: `stream_packet_size` passed as the config keeps it.
+#[test]
+fn a_found_packet_size_streams_frames() {
+    let camera = fake_camera(FakeCameraConfig {
+        frame_period: Duration::from_millis(15),
+        path_mtu: 4000,
+        ..Default::default()
+    });
+    camera.poke_register(feature::WIDTH, 128);
+    camera.poke_register(feature::HEIGHT, 128);
+    // Not acquiring yet: stream packets of the size under test would pass for test packets.
+    // `start_stream_with_config` starts acquisition itself.
+    let cam = Camera::connect_addr(camera.local_addr()).unwrap();
+    let found = cam.auto_packet_size(&packet_size_grid(false)).unwrap().packet_size;
+    assert_eq!(found, 4000);
+
+    let (tx, rx) = std::sync::mpsc::channel();
+    let cfg = StreamConfig {
+        packet_size: cam.stream_packet_size().unwrap(),
+        ..StreamConfig::default()
+    };
+    let stream = cam
+        .start_stream_with_config(cfg, move |buffer: Buffer| {
+            let _ = tx.send(buffer);
+        })
+        .unwrap();
+    let buf = rx.recv_timeout(Duration::from_secs(3)).expect("expected a frame");
+    cam.stop_stream(stream).unwrap();
+
+    assert_eq!(buf.status, BufferStatus::Success);
+    assert_eq!(buf.data().len(), 128 * 128);
+    assert_eq!(camera.peek_register(PACKET_SIZE_REG) & 0xffff, 4000);
 }
 
 /// Scenario 4 — Resend under loss: covered thoroughly at the `aravis-port-stream` layer

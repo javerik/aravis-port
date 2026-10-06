@@ -36,8 +36,14 @@ pub struct FakeCameraConfig {
     pub heartbeat_timeout: Duration,
     /// How often a new frame is sent while acquisition is active.
     pub frame_period: Duration,
-    /// GVSP packet size used to chunk each frame's payload.
+    /// Power-on `GevSCPSPacketSize`, and so the GVSP packet size used to chunk each frame's
+    /// payload until a client programs another.
     pub packet_size: u16,
+    /// The largest packet that gets from this camera to the client: stream and test packets
+    /// (`GevSCPSFireTestPacket`) bigger than this are lost, as on a link with that MTU.
+    pub path_mtu: u16,
+    /// Whether test packets are sent at all. `false` models a device without support for them.
+    pub test_packets: bool,
     /// Independent per-packet drop probability (0.0-1.0), applied to each leader/payload/trailer
     /// packet, to drive packet-resend tests.
     pub gvsp_loss_probability: f64,
@@ -54,6 +60,8 @@ impl Default for FakeCameraConfig {
             heartbeat_timeout: Duration::from_millis(3000),
             frame_period: Duration::from_millis(40),
             packet_size: 1500,
+            path_mtu: 9000,
+            test_packets: true,
             gvsp_loss_probability: 0.0,
         }
     }
@@ -94,12 +102,18 @@ impl FakeCamera {
             aravis_port_core::bootstrap::offset::HEARTBEAT_TIMEOUT,
             cfg.heartbeat_timeout.as_millis() as u32,
         );
+        bank.write_u32(
+            aravis_port_core::bootstrap::offset::STREAM_CHANNEL_0_PACKET_SIZE,
+            u32::from(cfg.packet_size),
+        );
 
         let shared = Arc::new(Mutex::new(SharedState {
             bank,
             controller: None,
             heartbeat_deadline: Instant::now(),
             packet_size: cfg.packet_size,
+            path_mtu: cfg.path_mtu,
+            test_packets: cfg.test_packets,
         }));
 
         let (gvcp_stop_tx, gvcp_join) = gvcp_server::spawn(socket, shared.clone(), cfg.heartbeat_timeout);

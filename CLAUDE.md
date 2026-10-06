@@ -45,7 +45,8 @@ Six crates, layered bottom-up:
 These were validated against AT-Automation Technology C5-2040-GigE and C6-2040-GigE cameras, and the code comments explain each one:
 
 - `GevSCPSPacketSize` counts IP and UDP headers too, so the per-packet payload is `packet_size - 20 - 8 - 8(status+std header)`. See `per_packet_capacity` in `stream/src/reassembly.rs`.
-- The default stream packet size is 1400 because some devices' power-on default is above the 1500-byte MTU once headers are added.
+- The default stream packet size is 1400 because some devices' power-on default is above the 1500-byte MTU once headers are added. To stream with the device's own value instead, pass `Camera::stream_packet_size()` to `start_stream*_with_config`.
+- `Camera::auto_packet_size`/`test_packet_size` port Aravis's packet-size check: write size + don't-fragment + fire-test-packet to `GevSCPSPacketSize` (bits in `bootstrap::stream_packet_size`) and wait for a UDP payload of exactly `size - 28` at a probe socket the stream channel points to. They must not run while acquiring, because stream packets of the size under test look the same. The fake camera only delivers stream and test packets up to `FakeCameraConfig::path_mtu`, and can be configured to send no test packets (`test_packets: false`).
 - The discovery timeout applies per bind address.
 - Frame-id late-frame detection is a simple distance check and doesn't handle 16-bit wraparound. This is a documented limitation.
 - Some devices need GenICam 1.0 "legacy" register access: 4-byte feature accesses go through READREG/WRITEREG instead of READMEM/WRITEMEM. This applies when the XML schema is < 1.1.0, and to devices on Aravis's quirk list even when they declare a newer schema (the C6 does). See `uses_legacy_register_access` in `device/src/io.rs`.

@@ -24,6 +24,7 @@ use aravis_port::core::bootstrap::offset;
 use aravis_port::memory::PayloadType;
 use aravis_port::net::{discover, DiscoveredDevice, DiscoveryOptions};
 use aravis_port::prelude::*;
+use aravis_port::PacketSizeSearch;
 
 const GROUP: &str = "LiveCamIntegrationTests";
 const DISCOVERY_TIMEOUT: Duration = Duration::from_secs(2);
@@ -70,6 +71,7 @@ const TESTS: &[(&str, TestFn)] = &[
     ("stream_callback_receives_frames", stream_callback_receives_frames),
     ("stream_channel_zero_copy_frames", stream_channel_zero_copy_frames),
     ("stream_with_custom_packet_size", stream_with_custom_packet_size),
+    ("auto_packet_size_finds_a_streaming_size", auto_packet_size_finds_a_streaming_size),
     ("stream_can_restart", stream_can_restart),
     ("chunk_data_matches_genicam_browser", chunk_data_matches_genicam_browser),
 ];
@@ -340,6 +342,42 @@ fn stream_with_custom_packet_size(cam: &LiveCam) -> TestResult {
     let (frames, payload_size) = stream_frames(&camera, Some(cfg), 5)?;
     check_frames(&frames, payload_size)?;
     Ok(Outcome::Passed)
+}
+
+/// Test packets find the largest packet size the link carries; frames stream at it, and one step
+/// above it doesn't get through. Restores the original packet size.
+fn auto_packet_size_finds_a_streaming_size(cam: &LiveCam) -> TestResult {
+    let camera = connect_for_streaming(cam)?;
+    let original = camera.stream_packet_size()?;
+    let bound = |v: Option<aravis_port::genicam::Value>, default: i64| v.map(|v| v.as_i64()).unwrap_or(default) as u16;
+    let (min, max, inc) = match camera.feature_info("GevSCPSPacketSize") {
+        Ok(info) => (bound(info.min, 576), bound(info.max, 9000), bound(info.inc, 4).max(1)),
+        Err(_) => (576, 9000, 4),
+    };
+    let search = PacketSizeSearch {
+        min,
+        max,
+        inc,
+        exit_early: false,
+    };
+    let result = (|| -> TestResult {
+        let outcome = camera.auto_packet_size(&search)?;
+        ensure!(outcome.test_packets, "no test packet got through, not even at {min}");
+        let found = outcome.packet_size;
+        ensure!(camera.stream_packet_size()? == found, "the found size {found} is not programmed");
+        if found + inc <= max {
+            ensure!(!camera.test_packet_size(found + inc)?, "{} gets through, but the search stopped at {found}", found + inc);
+        }
+        let cfg = StreamConfig {
+            packet_size: found,
+            ..StreamConfig::default()
+        };
+        let (frames, payload_size) = stream_frames(&camera, Some(cfg), 5)?;
+        check_frames(&frames, payload_size)?;
+        Ok(Outcome::PassedWith(format!("packet size {found} (bounds {min}..={max} step {inc}, was {original})")))
+    })();
+    camera.device().set_stream_packet_size(original)?;
+    result
 }
 
 fn stream_can_restart(cam: &LiveCam) -> TestResult {

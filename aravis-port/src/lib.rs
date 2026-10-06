@@ -42,7 +42,7 @@ pub use aravis_port_device::net::DiscoveredDevice;
 pub use aravis_port_device::{Device, DeviceConfig, FeatureValue};
 pub use aravis_port_stream::StreamConfig;
 
-pub use camera::{Camera, StreamHandle};
+pub use camera::{Camera, PacketSizeOutcome, PacketSizeSearch, StreamHandle};
 
 /// Discover cameras on the network within `timeout`. Blocks for the full duration of the
 /// broadcast round. See [`aravis_port_device::net::DiscoveryOptions`] for interface-selection

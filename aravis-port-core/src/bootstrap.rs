@@ -64,6 +64,19 @@ pub mod control_channel_privilege {
     pub const CONTROL: u32 = 1 << 1;
 }
 
+/// Fields of [`offset::STREAM_CHANNEL_0_PACKET_SIZE`] (`GevSCPSPacketSize` and its flags).
+pub mod stream_packet_size {
+    /// Writing this bit makes the device send one test packet of the programmed size to the
+    /// stream channel's destination (`GevSCPSFireTestPacket`).
+    pub const FIRE_TEST_PACKET: u32 = 1 << 31;
+    /// Sets the IP "don't fragment" flag on stream packets (`GevSCPSDoNotFragment`).
+    pub const DO_NOT_FRAGMENT: u32 = 1 << 30;
+    /// Multi-byte pixels are sent big-endian (`GevSCPSBigEndian`).
+    pub const BIG_ENDIAN: u32 = 1 << 29;
+    /// The packet size itself: the whole IP datagram, IP and UDP headers included.
+    pub const SIZE_MASK: u32 = 0xffff;
+}
+
 /// Bit flags within [`offset::CURRENT_IP_CONFIG`] / [`offset::SUPPORTED_IP_CONFIG`].
 pub mod ip_config {
     pub const PERSISTENT: u32 = 1 << 0;
