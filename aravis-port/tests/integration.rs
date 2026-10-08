@@ -5,7 +5,9 @@
 use std::net::{Ipv4Addr, UdpSocket};
 use std::time::Duration;
 
-use aravis_port::core::gvcp::{Command, DiscoveryAck, GvcpHeader, GvcpPayload, PacketType, HEADER_LEN};
+use aravis_port::core::gvcp::{
+    Command, DiscoveryAck, GvcpHeader, GvcpPayload, PacketType, HEADER_LEN,
+};
 use aravis_port::memory::{BufferStatus, ChunkTlvIndex};
 use aravis_port::prelude::*;
 use aravis_port::{Device, DeviceConfig, PacketSizeOutcome, PacketSizeSearch};
@@ -35,9 +37,13 @@ fn discovery_finds_the_fake_camera() {
         size: 0,
         id: 0xffff,
     };
-    socket.send_to(&header.to_bytes(), camera.local_addr()).unwrap();
+    socket
+        .send_to(&header.to_bytes(), camera.local_addr())
+        .unwrap();
 
-    socket.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+    socket
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .unwrap();
     let mut buf = [0u8; 1024];
     let (n, _from) = socket.recv_from(&mut buf).unwrap();
     let resp = GvcpHeader::from_bytes(&buf[..n]).unwrap();
@@ -77,7 +83,9 @@ fn camera_start_stream_receives_ten_frames() {
 
     let mut received = 0;
     for _ in 0..10 {
-        let buf = rx.recv_timeout(Duration::from_secs(3)).expect("expected a frame");
+        let buf = rx
+            .recv_timeout(Duration::from_secs(3))
+            .expect("expected a frame");
         assert_eq!(buf.status, BufferStatus::Success);
         assert_eq!(buf.data().len(), 32 * 32);
         received += 1;
@@ -99,7 +107,8 @@ fn camera_streams_two_bytes_per_pixel_in_mono16() {
     camera.poke_register(feature::ACQUISITION_ACTIVE, 1);
 
     let cam = Camera::connect_addr(camera.local_addr()).unwrap();
-    cam.write::<String>("PixelFormat", "Mono16".to_string()).unwrap();
+    cam.write::<String>("PixelFormat", "Mono16".to_string())
+        .unwrap();
     assert_eq!(cam.read::<i64>("PayloadSize").unwrap(), 64 * 32 * 2);
 
     let (tx, rx) = std::sync::mpsc::channel();
@@ -108,13 +117,23 @@ fn camera_streams_two_bytes_per_pixel_in_mono16() {
             let _ = tx.send(buffer);
         })
         .unwrap();
-    let buf = rx.recv_timeout(Duration::from_secs(3)).expect("expected a frame");
+    let buf = rx
+        .recv_timeout(Duration::from_secs(3))
+        .expect("expected a frame");
     cam.stop_stream(stream).unwrap();
 
     assert_eq!(buf.status, BufferStatus::Success);
     assert_eq!(buf.data().len(), 64 * 32 * 2);
-    let max = buf.data().chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).max().unwrap();
-    assert!(max > 255, "a 16-bit frame should use more than 8 bits, max was {max}");
+    let max = buf
+        .data()
+        .chunks_exact(2)
+        .map(|c| u16::from_le_bytes([c[0], c[1]]))
+        .max()
+        .unwrap();
+    assert!(
+        max > 255,
+        "a 16-bit frame should use more than 8 bits, max was {max}"
+    );
 }
 
 /// Linescan3D works like the C6's: switching into it moves `PixelFormat` to `Coord3D_C16`, the
@@ -127,17 +146,27 @@ fn linescan3d_switches_pixel_format_to_coord3d_c16() {
     assert_eq!(cam.read::<String>("DeviceScanType").unwrap(), "Areascan");
     assert_eq!(cam.read::<String>("PixelFormat").unwrap(), "Mono8");
 
-    cam.write::<String>("DeviceScanType", "Linescan3D".to_string()).unwrap();
+    cam.write::<String>("DeviceScanType", "Linescan3D".to_string())
+        .unwrap();
     assert_eq!(cam.read::<String>("PixelFormat").unwrap(), "Coord3D_C16");
     let entries = cam.feature_info("PixelFormat").unwrap().entries.unwrap();
-    let available: Vec<&str> = entries.iter().filter(|e| e.available).map(|e| e.name.as_str()).collect();
+    let available: Vec<&str> = entries
+        .iter()
+        .filter(|e| e.available)
+        .map(|e| e.name.as_str())
+        .collect();
     assert_eq!(available, ["Coord3D_C16"]);
-    assert!(cam.write::<String>("PixelFormat", "Mono16".to_string()).is_err());
+    assert!(cam
+        .write::<String>("PixelFormat", "Mono16".to_string())
+        .is_err());
     assert_eq!(cam.read::<String>("PixelFormat").unwrap(), "Coord3D_C16");
 
-    cam.write::<String>("DeviceScanType", "Areascan".to_string()).unwrap();
+    cam.write::<String>("DeviceScanType", "Areascan".to_string())
+        .unwrap();
     assert_eq!(cam.read::<String>("PixelFormat").unwrap(), "Mono8");
-    assert!(cam.write::<String>("PixelFormat", "Coord3D_C16".to_string()).is_err());
+    assert!(cam
+        .write::<String>("PixelFormat", "Coord3D_C16".to_string())
+        .is_err());
 }
 
 /// `Scan3dCoordinateScale`/`Offset` report the fixed calibration of the coordinate the selector
@@ -146,12 +175,31 @@ fn linescan3d_switches_pixel_format_to_coord3d_c16() {
 fn scan3d_coordinates_follow_their_selector() {
     let camera = fake_camera(FakeCameraConfig::default());
     let cam = Camera::connect_addr(camera.local_addr()).unwrap();
-    for (coordinate, scale) in [("CoordinateA", 0.05), ("CoordinateB", 0.1), ("CoordinateC", 0.001)] {
-        cam.write::<String>("Scan3dCoordinateSelector", coordinate.to_string()).unwrap();
-        assert_eq!(cam.read::<f64>("Scan3dCoordinateScale").unwrap(), scale, "{coordinate}");
-        assert_eq!(cam.read::<f64>("Scan3dCoordinateOffset").unwrap(), 0.0, "{coordinate}");
+    for (coordinate, scale) in [
+        ("CoordinateA", 0.05),
+        ("CoordinateB", 0.1),
+        ("CoordinateC", 0.001),
+    ] {
+        cam.write::<String>("Scan3dCoordinateSelector", coordinate.to_string())
+            .unwrap();
+        assert_eq!(
+            cam.read::<f64>("Scan3dCoordinateScale").unwrap(),
+            scale,
+            "{coordinate}"
+        );
+        assert_eq!(
+            cam.read::<f64>("Scan3dCoordinateOffset").unwrap(),
+            0.0,
+            "{coordinate}"
+        );
     }
-    assert_eq!(cam.feature_info("Scan3dCoordinateScale").unwrap().unit.as_deref(), Some("mm"));
+    assert_eq!(
+        cam.feature_info("Scan3dCoordinateScale")
+            .unwrap()
+            .unit
+            .as_deref(),
+        Some("mm")
+    );
 }
 
 /// A Linescan3D frame is two bytes per value, and its profiles carry the laser shadow's zeros
@@ -167,7 +215,8 @@ fn linescan3d_streams_two_byte_profiles() {
     camera.poke_register(feature::ACQUISITION_ACTIVE, 1);
 
     let cam = Camera::connect_addr(camera.local_addr()).unwrap();
-    cam.write::<String>("DeviceScanType", "Linescan3D".to_string()).unwrap();
+    cam.write::<String>("DeviceScanType", "Linescan3D".to_string())
+        .unwrap();
     assert_eq!(cam.read::<i64>("PayloadSize").unwrap(), 100 * 500 * 2);
 
     let (tx, rx) = std::sync::mpsc::channel();
@@ -176,13 +225,21 @@ fn linescan3d_streams_two_byte_profiles() {
             let _ = tx.send(buffer);
         })
         .unwrap();
-    let buf = rx.recv_timeout(Duration::from_secs(3)).expect("expected a frame");
+    let buf = rx
+        .recv_timeout(Duration::from_secs(3))
+        .expect("expected a frame");
     cam.stop_stream(stream).unwrap();
 
     assert_eq!(buf.status, BufferStatus::Success);
     assert_eq!(buf.data().len(), 100 * 500 * 2);
-    let values: Vec<u16> = buf.data().chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect();
-    assert!(values.iter().all(|&z| z == 0 || (9_000..=33_000).contains(&z)));
+    let values: Vec<u16> = buf
+        .data()
+        .chunks_exact(2)
+        .map(|c| u16::from_le_bytes([c[0], c[1]]))
+        .collect();
+    assert!(values
+        .iter()
+        .all(|&z| z == 0 || (9_000..=33_000).contains(&z)));
     assert!(values.iter().any(|&z| z > 9_000));
 }
 
@@ -211,13 +268,20 @@ fn camera_start_stream_with_config_uses_the_given_packet_size() {
         })
         .unwrap();
 
-    let buf = rx.recv_timeout(Duration::from_secs(3)).expect("expected a frame");
+    let buf = rx
+        .recv_timeout(Duration::from_secs(3))
+        .expect("expected a frame");
     cam.stop_stream(stream).unwrap();
 
     assert_eq!(buf.status, BufferStatus::Success);
     assert_eq!(buf.data().len(), 16 * 16);
-    let packet_size_reg = camera.peek_register(aravis_port::core::bootstrap::offset::STREAM_CHANNEL_0_PACKET_SIZE) & 0xffff;
-    assert_eq!(packet_size_reg, 900, "device's GevSCPSPacketSize should reflect the custom config, not the 1400 default");
+    let packet_size_reg = camera
+        .peek_register(aravis_port::core::bootstrap::offset::STREAM_CHANNEL_0_PACKET_SIZE)
+        & 0xffff;
+    assert_eq!(
+        packet_size_reg, 900,
+        "device's GevSCPSPacketSize should reflect the custom config, not the 1400 default"
+    );
 }
 
 const PACKET_SIZE_REG: u32 = aravis_port::core::bootstrap::offset::STREAM_CHANNEL_0_PACKET_SIZE;
@@ -245,7 +309,11 @@ fn test_packet_size_passes_up_to_the_path_mtu() {
     assert!(cam.test_packet_size(576).unwrap());
     assert!(cam.test_packet_size(1500).unwrap());
     assert!(!cam.test_packet_size(1504).unwrap());
-    assert_eq!(camera.peek_register(PACKET_SIZE_REG), 1500, "size and flags must be restored");
+    assert_eq!(
+        camera.peek_register(PACKET_SIZE_REG),
+        1500,
+        "size and flags must be restored"
+    );
 }
 
 /// The search finds the largest size on the grid that gets through, and programs it.
@@ -269,7 +337,11 @@ fn auto_packet_size_finds_the_path_mtu() {
             "path MTU {path_mtu}"
         );
         assert_eq!(cam.stream_packet_size().unwrap(), expected);
-        assert_eq!(camera.peek_register(PACKET_SIZE_REG), expected as u32, "don't-fragment must be restored");
+        assert_eq!(
+            camera.peek_register(PACKET_SIZE_REG),
+            expected as u32,
+            "don't-fragment must be restored"
+        );
     }
 }
 
@@ -311,7 +383,11 @@ fn auto_packet_size_searches_multiples_of_inc() {
             inc: 4,
             exit_early: false,
         };
-        assert_eq!(cam.auto_packet_size(&search).unwrap().packet_size, expected, "path MTU {path_mtu}");
+        assert_eq!(
+            cam.auto_packet_size(&search).unwrap().packet_size,
+            expected,
+            "path MTU {path_mtu}"
+        );
     }
 }
 
@@ -350,7 +426,10 @@ fn a_found_packet_size_streams_frames() {
     // Not acquiring yet: stream packets of the size under test would pass for test packets.
     // `start_stream_with_config` starts acquisition itself.
     let cam = Camera::connect_addr(camera.local_addr()).unwrap();
-    let found = cam.auto_packet_size(&packet_size_grid(false)).unwrap().packet_size;
+    let found = cam
+        .auto_packet_size(&packet_size_grid(false))
+        .unwrap()
+        .packet_size;
     assert_eq!(found, 4000);
 
     let (tx, rx) = std::sync::mpsc::channel();
@@ -363,7 +442,9 @@ fn a_found_packet_size_streams_frames() {
             let _ = tx.send(buffer);
         })
         .unwrap();
-    let buf = rx.recv_timeout(Duration::from_secs(3)).expect("expected a frame");
+    let buf = rx
+        .recv_timeout(Duration::from_secs(3))
+        .expect("expected a frame");
     cam.stop_stream(stream).unwrap();
 
     assert_eq!(buf.status, BufferStatus::Success);
@@ -414,14 +495,21 @@ fn camera_start_stream_recovers_frames_despite_packet_loss() {
                 // A recovered frame must be byte-correct, not merely complete: every payload
                 // packet has to land at the right offset. Checking the length catches a stride
                 // that drifts per packet, which otherwise silently interleaves zero gaps.
-                assert_eq!(buf.data().len(), 128 * 128, "recovered frame has a misaligned payload stride");
+                assert_eq!(
+                    buf.data().len(),
+                    128 * 128,
+                    "recovered frame has a misaligned payload stride"
+                );
                 successes += 1;
             }
         }
     }
     cam.stop_stream(stream).unwrap();
     assert!(total >= 10);
-    assert!(successes as f64 / total as f64 >= 0.7, "{successes}/{total} succeeded under 15% loss");
+    assert!(
+        successes as f64 / total as f64 >= 0.7,
+        "{successes}/{total} succeeded under 15% loss"
+    );
 }
 
 /// Scenario 5 — Chunk data: enable chunk mode, verify the appended chunk survives streaming, that
@@ -446,12 +534,17 @@ fn chunk_data_round_trips_through_streaming() {
         })
         .unwrap();
 
-    let buf = rx.recv_timeout(Duration::from_secs(3)).expect("expected a frame");
+    let buf = rx
+        .recv_timeout(Duration::from_secs(3))
+        .expect("expected a frame");
     cam.stop_stream(stream).unwrap();
 
     assert_eq!(buf.status, BufferStatus::Success);
     let payload = buf.data();
-    assert_eq!(payload.len() as i64, cam.read::<i64>("PayloadSize").unwrap());
+    assert_eq!(
+        payload.len() as i64,
+        cam.read::<i64>("PayloadSize").unwrap()
+    );
     let index = ChunkTlvIndex::build(payload).unwrap();
     let image = index
         .get(payload, aravis_port_fakecamera::CHUNK_ID_IMAGE)
@@ -464,7 +557,10 @@ fn chunk_data_round_trips_through_streaming() {
     assert_eq!(chunk_frame_id as u64, buf.frame_id);
 
     assert!(cam.is_available("ChunkFrameID").unwrap());
-    assert_eq!(cam.read_chunk::<i64>(&buf, "ChunkFrameID").unwrap() as u64, buf.frame_id);
+    assert_eq!(
+        cam.read_chunk::<i64>(&buf, "ChunkFrameID").unwrap() as u64,
+        buf.frame_id
+    );
     // Plain device reads can't see chunk data.
     assert!(cam.read::<i64>("ChunkFrameID").is_err());
 }
@@ -489,7 +585,9 @@ fn chunk_features_are_unavailable_without_chunk_mode() {
             let _ = tx.send(buffer);
         })
         .unwrap();
-    let buf = rx.recv_timeout(Duration::from_secs(3)).expect("expected a frame");
+    let buf = rx
+        .recv_timeout(Duration::from_secs(3))
+        .expect("expected a frame");
     cam.stop_stream(stream).unwrap();
 
     assert_eq!(buf.data().len(), 16 * 16);

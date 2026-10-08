@@ -57,7 +57,8 @@ pub fn tokenize(input: &str) -> Result<Vec<Token>, FormulaError> {
             i = j;
             continue;
         }
-        if c.is_ascii_digit() || (c == '.' && chars.get(i + 1).is_some_and(|c| c.is_ascii_digit())) {
+        if c.is_ascii_digit() || (c == '.' && chars.get(i + 1).is_some_and(|c| c.is_ascii_digit()))
+        {
             let start = i;
             let mut is_float = false;
             while i < chars.len() && (chars[i].is_ascii_digit() || chars[i] == '.') {
@@ -83,18 +84,26 @@ pub fn tokenize(input: &str) -> Result<Vec<Token>, FormulaError> {
             let text: String = chars[start..i].iter().collect();
             if is_float {
                 tokens.push(Token::Float(text.parse().map_err(|_| {
-                    FormulaError::Expected { expected: "number", found: text.clone() }
+                    FormulaError::Expected {
+                        expected: "number",
+                        found: text.clone(),
+                    }
                 })?));
             } else {
                 tokens.push(Token::Int(text.parse().map_err(|_| {
-                    FormulaError::Expected { expected: "number", found: text.clone() }
+                    FormulaError::Expected {
+                        expected: "number",
+                        found: text.clone(),
+                    }
                 })?));
             }
             continue;
         }
         if c.is_ascii_alphabetic() || c == '_' {
             let start = i;
-            while i < chars.len() && (chars[i].is_ascii_alphanumeric() || chars[i] == '_' || chars[i] == '.') {
+            while i < chars.len()
+                && (chars[i].is_ascii_alphanumeric() || chars[i] == '_' || chars[i] == '.')
+            {
                 i += 1;
             }
             tokens.push(Token::Ident(chars[start..i].iter().collect()));
@@ -233,12 +242,15 @@ mod tests {
     #[test]
     fn tokenizes_hex_literals() {
         let tokens = tokenize("SEL * 0x10").unwrap();
-        assert_eq!(tokens, vec![Token::Ident("SEL".into()), Token::Star, Token::Int(0x10)]);
+        assert_eq!(
+            tokens,
+            vec![Token::Ident("SEL".into()), Token::Star, Token::Int(0x10)]
+        );
     }
 
     #[test]
     fn tokenizes_float_literals() {
-        let tokens = tokenize("1.5 + .5 + 1e-3") .unwrap();
+        let tokens = tokenize("1.5 + .5 + 1e-3").unwrap();
         assert_eq!(tokens[0], Token::Float(1.5));
         assert_eq!(tokens[2], Token::Float(0.5));
         assert_eq!(tokens[4], Token::Float(1e-3));

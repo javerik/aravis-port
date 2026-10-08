@@ -11,7 +11,9 @@ fn main() {
         .get(1)
         .map(|s| s.parse().expect("invalid bind address"))
         .unwrap_or(Ipv4Addr::UNSPECIFIED);
-    let directed_broadcast: Option<Ipv4Addr> = args.get(2).map(|s| s.parse().expect("invalid broadcast address"));
+    let directed_broadcast: Option<Ipv4Addr> = args
+        .get(2)
+        .map(|s| s.parse().expect("invalid broadcast address"));
 
     let opts = DiscoveryOptions {
         bind_addrs: vec![(bind_addr, directed_broadcast)],

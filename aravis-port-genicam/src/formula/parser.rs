@@ -195,7 +195,11 @@ impl Parser {
             let then_branch = self.parse_ternary()?;
             self.expect(Token::Colon)?;
             let else_branch = self.parse_ternary()?;
-            Ok(Expr::Ternary(Box::new(cond), Box::new(then_branch), Box::new(else_branch)))
+            Ok(Expr::Ternary(
+                Box::new(cond),
+                Box::new(then_branch),
+                Box::new(else_branch),
+            ))
         } else {
             Ok(cond)
         }
@@ -276,7 +280,10 @@ impl Parser {
             };
             let expr = nested.parse_expr()?;
             if nested.pos != nested.tokens.len() {
-                return Err(FormulaError::TrailingInput(format!("{:?}", nested.tokens[nested.pos])));
+                return Err(FormulaError::TrailingInput(format!(
+                    "{:?}",
+                    nested.tokens[nested.pos]
+                )));
             }
             return Ok(expr);
         }
@@ -341,7 +348,11 @@ fn parse_constant_value(text: &str) -> Result<Value, FormulaError> {
 }
 
 impl Formula {
-    pub fn parse(text: &str, constants: &[(String, String)], sub_expressions: &[(String, String)]) -> Result<Self, FormulaError> {
+    pub fn parse(
+        text: &str,
+        constants: &[(String, String)],
+        sub_expressions: &[(String, String)],
+    ) -> Result<Self, FormulaError> {
         let mut const_map = HashMap::new();
         for (name, value) in constants {
             const_map.insert(name.clone(), parse_constant_value(value)?);
@@ -361,7 +372,10 @@ impl Formula {
         };
         let expr = parser.parse_expr()?;
         if parser.pos != parser.tokens.len() {
-            return Err(FormulaError::TrailingInput(format!("{:?}", parser.tokens[parser.pos])));
+            return Err(FormulaError::TrailingInput(format!(
+                "{:?}",
+                parser.tokens[parser.pos]
+            )));
         }
         Ok(Self { expr })
     }
@@ -422,7 +436,10 @@ mod tests {
         let result = Formula::parse(
             "A + 1",
             &[],
-            &[("A".to_string(), "B".to_string()), ("B".to_string(), "A".to_string())],
+            &[
+                ("A".to_string(), "B".to_string()),
+                ("B".to_string(), "A".to_string()),
+            ],
         );
         assert!(result.is_err());
     }

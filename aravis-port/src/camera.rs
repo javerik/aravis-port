@@ -184,7 +184,8 @@ impl Camera {
     pub fn auto_packet_size(&self, search: &PacketSizeSearch) -> Result<PacketSizeOutcome> {
         let previous = self.device.stream_packet_size()?;
         let dont_fragment = self.device.stream_do_not_fragment()?;
-        let outcome = TestPacketProbe::open(self).and_then(|mut probe| probe.search(search, previous));
+        let outcome =
+            TestPacketProbe::open(self).and_then(|mut probe| probe.search(search, previous));
         // Whatever happened, leave a size programmed that was either found or there before.
         let packet_size = outcome.as_ref().map(|o| o.packet_size).unwrap_or(previous);
         self.device.set_stream_packet_size(packet_size)?;
@@ -210,10 +211,14 @@ impl Camera {
     /// but `UdpSocket::connect` resolves routing and `local_addr()` then reports it.
     fn local_route_to(peer_ip: Ipv4Addr) -> Result<Ipv4Addr> {
         let probe = UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0)).map_err(Error::Io)?;
-        probe.connect((peer_ip, aravis_port_core::gvcp::PORT)).map_err(Error::Io)?;
+        probe
+            .connect((peer_ip, aravis_port_core::gvcp::PORT))
+            .map_err(Error::Io)?;
         match probe.local_addr().map_err(Error::Io)?.ip() {
             std::net::IpAddr::V4(v4) => Ok(v4),
-            std::net::IpAddr::V6(_) => Err(Error::GenIcam("expected an IPv4 route to the camera".to_string())),
+            std::net::IpAddr::V6(_) => Err(Error::GenIcam(
+                "expected an IPv4 route to the camera".to_string(),
+            )),
         }
     }
 
@@ -222,7 +227,10 @@ impl Camera {
     /// to the device (`GevSCPSPacketSize`) before acquiring, so the two always stay in sync —
     /// setting the packet size any other way (e.g. `camera.write("GevSCPSPacketSize", ...)`)
     /// before calling a `start_stream*` method has no effect, since this overwrites it.
-    fn open_stream(&self, cfg: StreamConfig) -> Result<(BufferPoolHandle, aravis_port_stream::StreamHandle)> {
+    fn open_stream(
+        &self,
+        cfg: StreamConfig,
+    ) -> Result<(BufferPoolHandle, aravis_port_stream::StreamHandle)> {
         let local_ip = Self::local_route_to(self.ip)?;
         let socket = UdpSocket::bind((local_ip, 0)).map_err(Error::Io)?;
         let local_port = socket.local_addr().map_err(Error::Io)?.port();
@@ -238,7 +246,8 @@ impl Camera {
         let requester = Box::new(DeviceResendRequester {
             sender: self.device.resend_sender(),
         });
-        let stream_handle = aravis_port_stream::spawn(socket, cfg, pool_stream, requester, None).map_err(Error::Io)?;
+        let stream_handle = aravis_port_stream::spawn(socket, cfg, pool_stream, requester, None)
+            .map_err(Error::Io)?;
 
         // Best-effort: most GEV cameras expose a standard "AcquisitionStart" command, and the
         // convenience API should "just work" without the caller needing to know that name. Not
@@ -263,7 +272,10 @@ impl Camera {
     /// use [`Camera::start_stream_with_config`]. To stream with whatever packet size the device
     /// already has (set by the user, or found by [`Camera::auto_packet_size`]), pass
     /// [`Camera::stream_packet_size`] as the config's `packet_size`.
-    pub fn start_stream(&self, callback: impl FnMut(Buffer) + Send + 'static) -> Result<StreamHandle> {
+    pub fn start_stream(
+        &self,
+        callback: impl FnMut(Buffer) + Send + 'static,
+    ) -> Result<StreamHandle> {
         self.start_stream_with_config(Self::default_stream_config(), callback)
     }
 
@@ -271,7 +283,11 @@ impl Camera {
     /// to set a non-default `packet_size` (e.g. jumbo frames on a high-MTU network), but also to
     /// tune resend/timeout behavior. `cfg.packet_size` is written to the device as
     /// `GevSCPSPacketSize` before acquiring.
-    pub fn start_stream_with_config(&self, cfg: StreamConfig, mut callback: impl FnMut(Buffer) + Send + 'static) -> Result<StreamHandle> {
+    pub fn start_stream_with_config(
+        &self,
+        cfg: StreamConfig,
+        mut callback: impl FnMut(Buffer) + Send + 'static,
+    ) -> Result<StreamHandle> {
         let (pool_user, stream_handle) = self.open_stream(cfg)?;
         let (stop_tx, stop_rx) = mpsc::channel();
         let join = thread::spawn(move || loop {
@@ -300,7 +316,10 @@ impl Camera {
 
     /// Like [`Camera::start_stream_channel`], but with caller-supplied [`StreamConfig`] — see
     /// [`Camera::start_stream_with_config`].
-    pub fn start_stream_channel_with_config(&self, cfg: StreamConfig) -> Result<(StreamHandle, BufferPoolHandle)> {
+    pub fn start_stream_channel_with_config(
+        &self,
+        cfg: StreamConfig,
+    ) -> Result<(StreamHandle, BufferPoolHandle)> {
         let (pool_user, stream_handle) = self.open_stream(cfg)?;
         Ok((
             StreamHandle {
@@ -376,14 +395,27 @@ impl<'a> TestPacketProbe<'a> {
                 if left.is_zero() {
                     break;
                 }
-                self.socket.set_read_timeout(Some(left)).map_err(Error::Io)?;
+                self.socket
+                    .set_read_timeout(Some(left))
+                    .map_err(Error::Io)?;
                 match self.socket.recv_from(&mut self.buf) {
-                    Ok((n, from)) if n == expected && from.ip() == std::net::IpAddr::V4(self.camera_ip) => {
+                    Ok((n, from))
+                        if n == expected && from.ip() == std::net::IpAddr::V4(self.camera_ip) =>
+                    {
                         log::debug!("test packet of {size} bytes arrived");
                         return Ok(true);
                     }
-                    Ok((n, from)) => log::trace!("skipping a {n}-byte datagram from {from} while testing {size}"),
-                    Err(e) if matches!(e.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut) => break,
+                    Ok((n, from)) => {
+                        log::trace!("skipping a {n}-byte datagram from {from} while testing {size}")
+                    }
+                    Err(e)
+                        if matches!(
+                            e.kind(),
+                            std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                        ) =>
+                    {
+                        break
+                    }
                     Err(e) => return Err(Error::Io(e)),
                 }
             }
@@ -406,7 +438,9 @@ impl<'a> TestPacketProbe<'a> {
         // The outermost multiples of `inc` inside the bounds; every size tested below is one.
         let (min, max) = (bottom.div_ceil(inc) * inc, top / inc * inc);
         if max < min {
-            return Err(Error::GenIcam(format!("no packet size to test between {bottom} and {top} in steps of {inc}")));
+            return Err(Error::GenIcam(format!(
+                "no packet size to test between {bottom} and {top} in steps of {inc}"
+            )));
         }
         let (inc, min, max) = (inc as u16, min as u16, max as u16);
         let outcome = |packet_size, test_packets| PacketSizeOutcome {

@@ -2,7 +2,9 @@ use std::collections::HashMap;
 use std::net::{Ipv4Addr, UdpSocket};
 use std::time::{Duration, Instant};
 
-use aravis_port_core::gvcp::{self, Command, DiscoveryAck, GvcpHeader, GvcpPayload, PacketFlags, PacketType, HEADER_LEN};
+use aravis_port_core::gvcp::{
+    self, Command, DiscoveryAck, GvcpHeader, GvcpPayload, PacketFlags, PacketType, HEADER_LEN,
+};
 use aravis_port_core::{Error, MacAddress, Result};
 
 /// Options for a discovery round. `std` has no interface-enumeration API, so unlike Aravis this
@@ -40,7 +42,13 @@ pub struct DiscoveredDevice {
 fn sanitize_id_component(s: &str) -> String {
     s.trim()
         .chars()
-        .map(|c| if c.is_ascii_alphanumeric() || c == '-' { c } else { '-' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' {
+                c
+            } else {
+                '-'
+            }
+        })
         .collect()
 }
 
@@ -105,7 +113,9 @@ pub fn discover(opts: &DiscoveryOptions) -> Result<Vec<DiscoveredDevice>> {
                     let Ok(header) = GvcpHeader::from_bytes(&buf[..n]) else {
                         continue;
                     };
-                    if header.packet_type != PacketType::Ack || header.command != Command::DiscoveryAck {
+                    if header.packet_type != PacketType::Ack
+                        || header.command != Command::DiscoveryAck
+                    {
                         continue;
                     }
                     if let Ok(ack) = DiscoveryAck::decode(&buf[HEADER_LEN..n]) {
@@ -113,7 +123,10 @@ pub fn discover(opts: &DiscoveryOptions) -> Result<Vec<DiscoveredDevice>> {
                         found.entry(device.mac).or_insert(device);
                     }
                 }
-                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock || e.kind() == std::io::ErrorKind::TimedOut => {
+                Err(e)
+                    if e.kind() == std::io::ErrorKind::WouldBlock
+                        || e.kind() == std::io::ErrorKind::TimedOut =>
+                {
                     continue;
                 }
                 Err(e) => return Err(Error::Io(e)),
@@ -132,9 +145,11 @@ mod tests {
     fn ack_with(model: &str, serial: &str) -> DiscoveryAck {
         let mut raw = [0u8; offset::DISCOVERY_DATA_SIZE];
         let bytes = model.as_bytes();
-        raw[offset::MODEL_NAME as usize..offset::MODEL_NAME as usize + bytes.len()].copy_from_slice(bytes);
+        raw[offset::MODEL_NAME as usize..offset::MODEL_NAME as usize + bytes.len()]
+            .copy_from_slice(bytes);
         let bytes = serial.as_bytes();
-        raw[offset::SERIAL_NUMBER as usize..offset::SERIAL_NUMBER as usize + bytes.len()].copy_from_slice(bytes);
+        raw[offset::SERIAL_NUMBER as usize..offset::SERIAL_NUMBER as usize + bytes.len()]
+            .copy_from_slice(bytes);
         DiscoveryAck(raw)
     }
 
@@ -143,7 +158,9 @@ mod tests {
         let ack = ack_with("C5-2040-GigE", "");
         let device = DiscoveredDevice::from_ack(&ack);
         assert_eq!(device.serial, device.mac.to_string());
-        assert!(device.id.ends_with(&sanitize_id_component(&device.mac.to_string())));
+        assert!(device
+            .id
+            .ends_with(&sanitize_id_component(&device.mac.to_string())));
     }
 
     #[test]

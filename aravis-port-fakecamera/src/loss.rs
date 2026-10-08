@@ -59,6 +59,9 @@ mod tests {
         let injector = LossInjector::new(0.3, 12345);
         let dropped = (0..10_000).filter(|_| injector.should_drop()).count();
         let fraction = dropped as f64 / 10_000.0;
-        assert!((fraction - 0.3).abs() < 0.05, "expected ~30% drop rate, got {fraction}");
+        assert!(
+            (fraction - 0.3).abs() < 0.05,
+            "expected ~30% drop rate, got {fraction}"
+        );
     }
 }

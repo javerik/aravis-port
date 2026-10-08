@@ -409,7 +409,8 @@ mod tests {
     fn discovery_ack_exposes_bootstrap_fields() {
         let mut raw = [0u8; offset::DISCOVERY_DATA_SIZE];
         let model = b"C5-2040-GigE";
-        raw[offset::MODEL_NAME as usize..offset::MODEL_NAME as usize + model.len()].copy_from_slice(model);
+        raw[offset::MODEL_NAME as usize..offset::MODEL_NAME as usize + model.len()]
+            .copy_from_slice(model);
         let ack = DiscoveryAck::decode(&raw).unwrap();
         assert_eq!(ack.model(), "C5-2040-GigE");
     }

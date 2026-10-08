@@ -110,7 +110,10 @@ impl<'a> BootstrapView<'a> {
     }
 
     pub fn mac_address(&self) -> crate::mac::MacAddress {
-        crate::mac::MacAddress::from_high_low(self.u32_at(offset::MAC_HIGH), self.u32_at(offset::MAC_LOW))
+        crate::mac::MacAddress::from_high_low(
+            self.u32_at(offset::MAC_HIGH),
+            self.u32_at(offset::MAC_LOW),
+        )
     }
 
     pub fn current_ip(&self) -> std::net::Ipv4Addr {
@@ -140,15 +143,18 @@ mod tests {
 
     fn fixture() -> Vec<u8> {
         let mut buf = vec![0u8; offset::DISCOVERY_DATA_SIZE];
-        buf[offset::MAC_HIGH as usize + 2..offset::MAC_HIGH as usize + 4].copy_from_slice(&[0x70, 0xb3]);
-        buf[offset::MAC_LOW as usize..offset::MAC_LOW as usize + 4].copy_from_slice(&[0xd5, 0x34, 0x5b, 0x84]);
+        buf[offset::MAC_HIGH as usize + 2..offset::MAC_HIGH as usize + 4]
+            .copy_from_slice(&[0x70, 0xb3]);
+        buf[offset::MAC_LOW as usize..offset::MAC_LOW as usize + 4]
+            .copy_from_slice(&[0xd5, 0x34, 0x5b, 0x84]);
         buf[offset::CURRENT_IP as usize..offset::CURRENT_IP as usize + 4]
             .copy_from_slice(&[169, 254, 133, 91]);
         let manuf = b"AT-Automation Technology GmbH";
         buf[offset::MANUFACTURER_NAME as usize..offset::MANUFACTURER_NAME as usize + manuf.len()]
             .copy_from_slice(manuf);
         let model = b"C5-2040-GigE";
-        buf[offset::MODEL_NAME as usize..offset::MODEL_NAME as usize + model.len()].copy_from_slice(model);
+        buf[offset::MODEL_NAME as usize..offset::MODEL_NAME as usize + model.len()]
+            .copy_from_slice(model);
         let serial = b"21312821";
         buf[offset::SERIAL_NUMBER as usize..offset::SERIAL_NUMBER as usize + serial.len()]
             .copy_from_slice(serial);
@@ -160,7 +166,10 @@ mod tests {
         let data = fixture();
         let view = BootstrapView(&data);
         assert_eq!(view.mac_address().to_string(), "70:b3:d5:34:5b:84");
-        assert_eq!(view.current_ip(), std::net::Ipv4Addr::new(169, 254, 133, 91));
+        assert_eq!(
+            view.current_ip(),
+            std::net::Ipv4Addr::new(169, 254, 133, 91)
+        );
         assert_eq!(view.manufacturer(), "AT-Automation Technology GmbH");
         assert_eq!(view.model(), "C5-2040-GigE");
         assert_eq!(view.serial(), "21312821");

@@ -16,11 +16,19 @@ pub fn generate_mono8(width: u32, height: u32, frame_id: u64) -> Vec<u8> {
 /// 16-bit frame actually exercises values above 255, then masked to `bits` the way a sensor with
 /// that depth would never set the high bits.
 pub fn generate_mono16(width: u32, height: u32, frame_id: u64, bits: u32) -> Vec<u8> {
-    let mask: u32 = if bits >= 16 { 0xffff } else { (1u32 << bits) - 1 };
+    let mask: u32 = if bits >= 16 {
+        0xffff
+    } else {
+        (1u32 << bits) - 1
+    };
     let mut data = Vec::with_capacity((width * height * 2) as usize);
     for y in 0..height {
         for x in 0..width {
-            let value = (x.wrapping_add(y).wrapping_add(frame_id as u32).wrapping_mul(8) & mask) as u16;
+            let value = (x
+                .wrapping_add(y)
+                .wrapping_add(frame_id as u32)
+                .wrapping_mul(8)
+                & mask) as u16;
             data.extend_from_slice(&value.to_le_bytes());
         }
     }
@@ -49,11 +57,14 @@ pub fn generate_profiles(width: u32, height: u32, frame_id: u64) -> Vec<u8> {
     use std::f64::consts::TAU;
     let w = width.max(1) as f64;
     // sin(a + b) from per-column and per-row tables: two multiplies per pixel instead of a sin.
-    let (col_sin, col_cos): (Vec<f64>, Vec<f64>) =
-        (0..width).map(|x| (TAU * 1.5 * x as f64 / w).sin_cos()).unzip();
+    let (col_sin, col_cos): (Vec<f64>, Vec<f64>) = (0..width)
+        .map(|x| (TAU * 1.5 * x as f64 / w).sin_cos())
+        .unzip();
     let mut data = Vec::with_capacity((width * height * 2) as usize);
     for row in 0..height {
-        let p = frame_id.wrapping_mul(height as u64).wrapping_add(row as u64);
+        let p = frame_id
+            .wrapping_mul(height as u64)
+            .wrapping_add(row as u64);
         let phase = p % PROFILE_CYCLE;
         let (row_sin, row_cos) = (TAU * (p % 600) as f64 / 600.0).sin_cos();
         let in_box = BOX_PROFILES.contains(&phase);
@@ -117,14 +128,20 @@ mod tests {
     #[test]
     fn mono16_exceeds_the_8_bit_range() {
         let data = generate_mono16(64, 64, 0, 16);
-        let max = data.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).max().unwrap();
+        let max = data
+            .chunks_exact(2)
+            .map(|c| u16::from_le_bytes([c[0], c[1]]))
+            .max()
+            .unwrap();
         assert!(max > 255, "max {max}");
     }
 
     #[test]
     fn mono10_never_sets_bits_above_ten() {
         let data = generate_mono16(256, 64, 3, 10);
-        assert!(data.chunks_exact(2).all(|c| u16::from_le_bytes([c[0], c[1]]) < 1024));
+        assert!(data
+            .chunks_exact(2)
+            .all(|c| u16::from_le_bytes([c[0], c[1]]) < 1024));
     }
 
     #[test]
@@ -136,14 +153,18 @@ mod tests {
     }
 
     fn u16s(data: &[u8]) -> Vec<u16> {
-        data.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect()
+        data.chunks_exact(2)
+            .map(|c| u16::from_le_bytes([c[0], c[1]]))
+            .collect()
     }
 
     #[test]
     fn profiles_continue_across_frames() {
         // Frame 2 of 4-row frames holds profiles 8..=11, the same as 1-row frames 8..=11.
         let stacked = generate_profiles(100, 4, 2);
-        let single: Vec<u8> = (8..=11).flat_map(|f| generate_profiles(100, 1, f)).collect();
+        let single: Vec<u8> = (8..=11)
+            .flat_map(|f| generate_profiles(100, 1, f))
+            .collect();
         assert_eq!(stacked, single);
     }
 
@@ -156,7 +177,10 @@ mod tests {
             let shadow = BOX_PROFILES.contains(&p) && SHADOW_U.contains(&(x / width as f64));
             assert_eq!(z == 0, shadow, "profile {p}, column {x}: {z}");
             if !shadow {
-                assert!((9_000..=33_000).contains(&z), "profile {p}, column {x}: {z}");
+                assert!(
+                    (9_000..=33_000).contains(&z),
+                    "profile {p}, column {x}: {z}"
+                );
             }
         }
     }

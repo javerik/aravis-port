@@ -17,7 +17,10 @@ impl TrailerPayload {
 
     pub fn decode(bytes: &[u8]) -> Result<Self> {
         if bytes.len() < 8 {
-            return Err(Error::Truncated { need: 8, got: bytes.len() });
+            return Err(Error::Truncated {
+                need: 8,
+                got: bytes.len(),
+            });
         }
         Ok(Self {
             payload_type: u32::from_be_bytes(bytes[0..4].try_into().unwrap()),

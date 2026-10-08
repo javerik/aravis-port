@@ -16,38 +16,74 @@ fn main() {
         .expect("invalid ip");
     let peer = SocketAddrV4::new(ip, aravis_port_core::gvcp::PORT);
 
-    let device = Device::connect(peer, DeviceConfig::default()).expect("connect + xml fetch/parse failed");
-    println!("connected and parsed GenICam XML successfully, has_control={}", device.has_control());
+    let device =
+        Device::connect(peer, DeviceConfig::default()).expect("connect + xml fetch/parse failed");
+    println!(
+        "connected and parsed GenICam XML successfully, has_control={}",
+        device.has_control()
+    );
 
     println!("Root categories: {:?}", device.categories().unwrap());
 
     println!("--- reads ---");
-    println!("DeviceVendorName = {:?}", device.read::<String>("DeviceVendorName"));
-    println!("DeviceModelName = {:?}", device.read::<String>("DeviceModelName"));
-    println!("DeviceSerialNumber = {:?}", device.read::<String>("DeviceSerialNumber"));
+    println!(
+        "DeviceVendorName = {:?}",
+        device.read::<String>("DeviceVendorName")
+    );
+    println!(
+        "DeviceModelName = {:?}",
+        device.read::<String>("DeviceModelName")
+    );
+    println!(
+        "DeviceSerialNumber = {:?}",
+        device.read::<String>("DeviceSerialNumber")
+    );
     println!("Width = {:?}", device.read::<i64>("Width"));
     println!("Height = {:?}", device.read::<i64>("Height"));
     println!("PixelFormat = {:?}", device.read::<String>("PixelFormat"));
     println!("ExposureTime = {:?}", device.read::<f64>("ExposureTime"));
-    println!("AcquisitionFrameRate = {:?}", device.read::<f64>("AcquisitionFrameRate"));
+    println!(
+        "AcquisitionFrameRate = {:?}",
+        device.read::<f64>("AcquisitionFrameRate")
+    );
     println!("PayloadSize = {:?}", device.read::<i64>("PayloadSize"));
     println!("TestPattern = {:?}", device.read::<String>("TestPattern"));
     // GevSCPSPacketSize is backed by a MaskedIntReg with <LSB>31</LSB><MSB>16</MSB> (LSB > MSB) —
     // a big-endian bit-reversal convention; checking this exercises that specific decode path.
-    println!("GevSCPSPacketSize (masked, LSB>MSB) = {:?}", device.read::<i64>("GevSCPSPacketSize"));
+    println!(
+        "GevSCPSPacketSize (masked, LSB>MSB) = {:?}",
+        device.read::<i64>("GevSCPSPacketSize")
+    );
 
     println!("--- safe writes (ExposureTime, AcquisitionFrameRate untouched; TestPattern round-tripped) ---");
     let original_test_pattern = device.read::<String>("TestPattern").unwrap();
-    device.write("TestPattern", "Off".to_string()).expect("write TestPattern=Off failed");
-    println!("TestPattern after write Off = {:?}", device.read::<String>("TestPattern"));
+    device
+        .write("TestPattern", "Off".to_string())
+        .expect("write TestPattern=Off failed");
+    println!(
+        "TestPattern after write Off = {:?}",
+        device.read::<String>("TestPattern")
+    );
     device
         .write("TestPattern", original_test_pattern.clone())
         .expect("failed to restore TestPattern");
-    println!("TestPattern restored to {:?} = {:?}", original_test_pattern, device.read::<String>("TestPattern"));
+    println!(
+        "TestPattern restored to {:?} = {:?}",
+        original_test_pattern,
+        device.read::<String>("TestPattern")
+    );
 
     let original_exposure = device.read::<f64>("ExposureTime").unwrap();
-    device.write("ExposureTime", original_exposure + 500.0).unwrap();
-    println!("ExposureTime after +500 = {:?}", device.read::<f64>("ExposureTime"));
+    device
+        .write("ExposureTime", original_exposure + 500.0)
+        .unwrap();
+    println!(
+        "ExposureTime after +500 = {:?}",
+        device.read::<f64>("ExposureTime")
+    );
     device.write("ExposureTime", original_exposure).unwrap();
-    println!("ExposureTime restored = {:?}", device.read::<f64>("ExposureTime"));
+    println!(
+        "ExposureTime restored = {:?}",
+        device.read::<f64>("ExposureTime")
+    );
 }

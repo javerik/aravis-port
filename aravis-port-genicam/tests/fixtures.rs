@@ -1,4 +1,7 @@
-use aravis_port_genicam::{ChunkDataAccess, EnumEntryState, GenApiTree, GenIcamError, MemoryRegisterAccess, RegisterAccess, Value};
+use aravis_port_genicam::{
+    ChunkDataAccess, EnumEntryState, GenApiTree, GenIcamError, MemoryRegisterAccess,
+    RegisterAccess, Value,
+};
 
 #[test]
 fn literal_values_of_every_basic_type() {
@@ -24,11 +27,11 @@ fn literal_values_of_every_basic_type() {
     assert_eq!(tree.get_integer(&mut io, "Width").unwrap(), 64);
     assert_eq!(tree.get_float(&mut io, "Gain").unwrap(), 1.5);
     assert!(tree.get_boolean(&mut io, "ReverseX").unwrap());
-    assert_eq!(tree.get_enum_symbolic(&mut io, "PixelFormat").unwrap(), "Mono8");
     assert_eq!(
-        tree.category_children("Root").unwrap().len(),
-        4
+        tree.get_enum_symbolic(&mut io, "PixelFormat").unwrap(),
+        "Mono8"
     );
+    assert_eq!(tree.category_children("Root").unwrap().len(), 4);
 }
 
 #[test]
@@ -158,7 +161,10 @@ fn cachable_register_skips_repeated_device_reads_until_invalidator_changes() {
     assert_eq!(tree.get_integer(&mut io, "Cached").unwrap(), 7);
     let reads_after_first = io.read_count;
     assert_eq!(tree.get_integer(&mut io, "Cached").unwrap(), 7);
-    assert_eq!(io.read_count, reads_after_first, "second read should hit cache, not the device");
+    assert_eq!(
+        io.read_count, reads_after_first,
+        "second read should hit cache, not the device"
+    );
 
     // Selector is a plain literal-valued Integer (not writable) in this fixture, so directly
     // bump its epoch isn't possible via set_integer; instead verify caching survives when the
@@ -237,7 +243,10 @@ fn struct_entries_are_bit_fields_of_their_struct_reg() {
     tree.set_integer(&mut io, "FilterSize", 5).unwrap();
     tree.set_integer(&mut io, "IsFirAvailableReg", 1).unwrap();
 
-    assert_eq!(u32::from_be_bytes(io.bytes[..4].try_into().unwrap()), (5 << 20) | 1);
+    assert_eq!(
+        u32::from_be_bytes(io.bytes[..4].try_into().unwrap()),
+        (5 << 20) | 1
+    );
     assert_eq!(tree.get_integer(&mut io, "FilterSize").unwrap(), 5);
     assert_eq!(tree.get_integer(&mut io, "IsFirAvailableReg").unwrap(), 1);
 }
@@ -259,7 +268,10 @@ fn string_nodes_are_literal_or_delegate_to_a_string_reg() {
     let tree = GenApiTree::parse(xml).unwrap();
     let mut io = MemoryRegisterAccess::new(8);
 
-    assert_eq!(tree.node_kind(tree.node_id("MessageText").unwrap()), "String");
+    assert_eq!(
+        tree.node_kind(tree.node_id("MessageText").unwrap()),
+        "String"
+    );
     assert_eq!(tree.get_string(&mut io, "Candidates").unwrap(), "A,B");
     assert!(tree.set_string(&mut io, "Candidates", "C").is_err());
 
@@ -339,12 +351,25 @@ fn chunk_features_read_from_buffer_chunks_with_a_scan_line_index() {
     let mut records = vec![0u8; 128];
     records[64 + 8..64 + 16].copy_from_slice(&351_241u64.to_le_bytes());
     records[64 + 40..64 + 42].copy_from_slice(&28u16.to_le_bytes());
-    let payload = chunk_payload(b"pixels", &[(0x4444_2222, vec![0; 64]), (0x4444_3333, records)]);
+    let payload = chunk_payload(
+        b"pixels",
+        &[(0x4444_2222, vec![0; 64]), (0x4444_3333, records)],
+    );
 
     let mut chunks = ChunkDataAccess::new(&mut device, &payload).unwrap();
-    assert_eq!(tree.get_integer(&mut chunks, "ChunkFrameID").unwrap(), 351_241);
-    assert_eq!(tree.get_integer(&mut chunks, "ChunkLineStatusAllValue").unwrap(), 28);
-    assert!(tree.set_integer(&mut chunks, "ChunkFrameID", 1).is_err(), "chunk data is read-only");
+    assert_eq!(
+        tree.get_integer(&mut chunks, "ChunkFrameID").unwrap(),
+        351_241
+    );
+    assert_eq!(
+        tree.get_integer(&mut chunks, "ChunkLineStatusAllValue")
+            .unwrap(),
+        28
+    );
+    assert!(
+        tree.set_integer(&mut chunks, "ChunkFrameID", 1).is_err(),
+        "chunk data is read-only"
+    );
 
     // Availability follows the device register, not the chunk.
     assert!(!tree.is_available(&mut device, "ChunkFrameID").unwrap());
@@ -386,7 +411,11 @@ fn invalidate_cache_forces_a_fresh_device_read() {
     assert_eq!(tree.get_integer(&mut io, "PayloadSizeReg").unwrap(), 100);
 
     io.write_memory(0, &200u32.to_be_bytes()).unwrap();
-    assert_eq!(tree.get_integer(&mut io, "PayloadSizeReg").unwrap(), 100, "served from cache");
+    assert_eq!(
+        tree.get_integer(&mut io, "PayloadSizeReg").unwrap(),
+        100,
+        "served from cache"
+    );
     tree.invalidate_cache();
     assert_eq!(tree.get_integer(&mut io, "PayloadSizeReg").unwrap(), 200);
 }
@@ -421,9 +450,15 @@ fn a_cached_selector_indexed_register_is_reread_when_the_selector_moves_it() {
     io.write_memory(0x14, &9u32.to_be_bytes()).unwrap();
 
     assert_eq!(tree.get_integer(&mut io, "Gain").unwrap(), 7);
-    tree.set_enum_symbolic(&mut io, "GainSelector", "Red").unwrap();
-    assert_eq!(tree.get_integer(&mut io, "Gain").unwrap(), 9, "read from the Red gain's address");
-    tree.set_enum_symbolic(&mut io, "GainSelector", "All").unwrap();
+    tree.set_enum_symbolic(&mut io, "GainSelector", "Red")
+        .unwrap();
+    assert_eq!(
+        tree.get_integer(&mut io, "Gain").unwrap(),
+        9,
+        "read from the Red gain's address"
+    );
+    tree.set_enum_symbolic(&mut io, "GainSelector", "All")
+        .unwrap();
     assert_eq!(tree.get_integer(&mut io, "Gain").unwrap(), 7);
 
     // An unchanged selector still hits the cache.
@@ -508,7 +543,11 @@ fn bounds_of_an_unavailable_feature_are_not_evaluated() {
     let info = tree.feature_info(&mut io, "LineRate").unwrap();
     assert!(!info.available);
     assert_eq!((info.min, info.max), (None, None));
-    assert_eq!(info.unit.as_deref(), Some("Hz"), "static metadata is still reported");
+    assert_eq!(
+        info.unit.as_deref(),
+        Some("Hz"),
+        "static metadata is still reported"
+    );
 }
 
 #[test]
@@ -574,8 +613,16 @@ fn enum_entry_availability_is_reported() {
     assert_eq!(
         info.entries.unwrap(),
         vec![
-            EnumEntryState { name: "Gain_1_0".into(), value: 2, available: true },
-            EnumEntryState { name: "Gain_2_6".into(), value: 7, available: false },
+            EnumEntryState {
+                name: "Gain_1_0".into(),
+                value: 2,
+                available: true
+            },
+            EnumEntryState {
+                name: "Gain_2_6".into(),
+                value: 7,
+                available: false
+            },
         ]
     );
 }
@@ -607,8 +654,15 @@ fn value_indexed_float_follows_its_index_and_default() {
     tree.set_integer(&mut io, "SensorGain", 5).unwrap();
     assert_eq!(tree.get_float(&mut io, "Gain").unwrap(), 9.5);
     tree.set_integer(&mut io, "SensorGain", 3).unwrap();
-    assert_eq!(tree.get_float(&mut io, "Gain").unwrap(), 1.0, "unlisted index uses the default");
-    assert!(matches!(tree.set_float(&mut io, "Gain", 2.0), Err(GenIcamError::NotWritable(_))));
+    assert_eq!(
+        tree.get_float(&mut io, "Gain").unwrap(),
+        1.0,
+        "unlisted index uses the default"
+    );
+    assert!(matches!(
+        tree.set_float(&mut io, "Gain", 2.0),
+        Err(GenIcamError::NotWritable(_))
+    ));
 }
 
 #[test]
@@ -632,7 +686,11 @@ fn executing_a_command_invalidates_registers_listing_it() {
 
     // The device loads a user set behind the cache's back.
     io.write_memory(0, &2500u32.to_be_bytes()).unwrap();
-    assert_eq!(tree.get_integer(&mut io, "Exposure").unwrap(), 1000, "still cached");
+    assert_eq!(
+        tree.get_integer(&mut io, "Exposure").unwrap(),
+        1000,
+        "still cached"
+    );
     tree.execute_command(&mut io, "UserSetLoad").unwrap();
     assert_eq!(tree.get_integer(&mut io, "Exposure").unwrap(), 2500);
 }
@@ -646,15 +704,24 @@ fn malformed_min_literal_is_an_error_not_a_panic() {
     let xml = r#"<RegisterDescription>
       <Float Name="G"><pIndex>G</pIndex><ValueIndexed>1.0</ValueIndexed></Float>
     </RegisterDescription>"#;
-    assert!(matches!(GenApiTree::parse(xml), Err(GenIcamError::Xml(_))), "ValueIndexed without Index");
+    assert!(
+        matches!(GenApiTree::parse(xml), Err(GenIcamError::Xml(_))),
+        "ValueIndexed without Index"
+    );
 }
 
 #[test]
 fn feature_info_of_unknown_feature_is_not_found() {
     let tree = GenApiTree::parse("<RegisterDescription/>").unwrap();
     let mut io = MemoryRegisterAccess::new(4);
-    assert!(matches!(tree.feature_info(&mut io, "Nope"), Err(GenIcamError::NotFound(_))));
-    assert!(matches!(tree.is_locked(&mut io, "Nope"), Err(GenIcamError::NotFound(_))));
+    assert!(matches!(
+        tree.feature_info(&mut io, "Nope"),
+        Err(GenIcamError::NotFound(_))
+    ));
+    assert!(matches!(
+        tree.is_locked(&mut io, "Nope"),
+        Err(GenIcamError::NotFound(_))
+    ));
 }
 
 #[test]
@@ -679,10 +746,17 @@ fn lock_dependencies_are_followed_through_formulas() {
         int_reg("FrameRateEnable", 0)
     );
     let tree = GenApiTree::parse(&xml).unwrap();
-    assert!(tree.lock_depends_on("ExposureTime", "TLParamsLocked").unwrap());
+    assert!(tree
+        .lock_depends_on("ExposureTime", "TLParamsLocked")
+        .unwrap());
     assert!(tree.lock_depends_on("FrameRate", "TLParamsLocked").unwrap());
-    assert!(!tree.lock_depends_on("LightBrightness", "TLParamsLocked").unwrap());
+    assert!(!tree
+        .lock_depends_on("LightBrightness", "TLParamsLocked")
+        .unwrap());
     assert!(!tree.lock_depends_on("Free", "TLParamsLocked").unwrap());
     assert!(!tree.lock_depends_on("ExposureTime", "NoSuchNode").unwrap());
-    assert!(matches!(tree.lock_depends_on("Nope", "TLParamsLocked"), Err(GenIcamError::NotFound(_))));
+    assert!(matches!(
+        tree.lock_depends_on("Nope", "TLParamsLocked"),
+        Err(GenIcamError::NotFound(_))
+    ));
 }

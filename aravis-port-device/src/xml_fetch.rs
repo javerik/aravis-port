@@ -42,20 +42,27 @@ fn fetch_from_url(txn: &mut GvcpTransaction, url: &str) -> Result<Vec<u8>> {
         let size = parse_hex_u32(size_hex)? as usize;
         let data = txn.read_memory(address, size)?;
         if path.to_ascii_lowercase().ends_with(".zip") {
-            zip::extract_first_file(&data).map_err(|e| Error::GenIcam(format!("failed to unzip GenICam XML: {e}")))
+            zip::extract_first_file(&data)
+                .map_err(|e| Error::GenIcam(format!("failed to unzip GenICam XML: {e}")))
         } else {
             Ok(data)
         }
     } else if lower.starts_with("file:") {
-        Err(Error::GenIcam(format!("'file:' XML urls are not supported for network cameras: {url}")))
+        Err(Error::GenIcam(format!(
+            "'file:' XML urls are not supported for network cameras: {url}"
+        )))
     } else {
         Err(Error::GenIcam(format!("unsupported XML url scheme: {url}")))
     }
 }
 
 fn parse_hex_u32(text: &str) -> Result<u32> {
-    let t = text.trim().trim_start_matches("0x").trim_start_matches("0X");
-    u32::from_str_radix(t, 16).map_err(|_| Error::GenIcam(format!("invalid hex value '{text}' in XML url")))
+    let t = text
+        .trim()
+        .trim_start_matches("0x")
+        .trim_start_matches("0X");
+    u32::from_str_radix(t, 16)
+        .map_err(|_| Error::GenIcam(format!("invalid hex value '{text}' in XML url")))
 }
 
 #[cfg(test)]

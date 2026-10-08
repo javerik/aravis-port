@@ -41,7 +41,10 @@ impl<'a> BitReader<'a> {
     }
 
     fn read_bit(&mut self) -> Result<u32> {
-        let byte = *self.data.get(self.byte_pos).ok_or(InflateError::UnexpectedEnd)?;
+        let byte = *self
+            .data
+            .get(self.byte_pos)
+            .ok_or(InflateError::UnexpectedEnd)?;
         let bit = (byte >> self.bit_pos) & 1;
         self.bit_pos += 1;
         if self.bit_pos == 8 {
@@ -67,8 +70,14 @@ impl<'a> BitReader<'a> {
     }
 
     fn read_u16_le(&mut self) -> Result<u16> {
-        let lo = *self.data.get(self.byte_pos).ok_or(InflateError::UnexpectedEnd)?;
-        let hi = *self.data.get(self.byte_pos + 1).ok_or(InflateError::UnexpectedEnd)?;
+        let lo = *self
+            .data
+            .get(self.byte_pos)
+            .ok_or(InflateError::UnexpectedEnd)?;
+        let hi = *self
+            .data
+            .get(self.byte_pos + 1)
+            .ok_or(InflateError::UnexpectedEnd)?;
         self.byte_pos += 2;
         Ok(u16::from_le_bytes([lo, hi]))
     }
@@ -134,19 +143,23 @@ impl Huffman {
 }
 
 const LENGTH_BASE: [u16; 29] = [
-    3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15, 17, 19, 23, 27, 31, 35, 43, 51, 59, 67, 83, 99, 115, 131, 163, 195, 227, 258,
+    3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15, 17, 19, 23, 27, 31, 35, 43, 51, 59, 67, 83, 99, 115, 131,
+    163, 195, 227, 258,
 ];
 const LENGTH_EXTRA: [u32; 29] = [
     0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 0,
 ];
 const DIST_BASE: [u32; 30] = [
-    1, 2, 3, 4, 5, 7, 9, 13, 17, 25, 33, 49, 65, 97, 129, 193, 257, 385, 513, 769, 1025, 1537, 2049, 3073, 4097, 6145,
-    8193, 12289, 16385, 24577,
+    1, 2, 3, 4, 5, 7, 9, 13, 17, 25, 33, 49, 65, 97, 129, 193, 257, 385, 513, 769, 1025, 1537,
+    2049, 3073, 4097, 6145, 8193, 12289, 16385, 24577,
 ];
 const DIST_EXTRA: [u32; 30] = [
-    0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13, 13,
+    0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13,
+    13,
 ];
-const CODE_LENGTH_ORDER: [usize; 19] = [16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15];
+const CODE_LENGTH_ORDER: [usize; 19] = [
+    16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15,
+];
 
 fn fixed_huffman_tables() -> (Huffman, Huffman) {
     let mut lit_lengths = [0u8; 288];
@@ -203,10 +216,18 @@ fn read_dynamic_tables(br: &mut BitReader) -> Result<(Huffman, Huffman)> {
         return Err(InflateError::InvalidHuffmanCode);
     }
 
-    Ok((Huffman::build(&lengths[..hlit]), Huffman::build(&lengths[hlit..])))
+    Ok((
+        Huffman::build(&lengths[..hlit]),
+        Huffman::build(&lengths[hlit..]),
+    ))
 }
 
-fn inflate_block(br: &mut BitReader, lit: &Huffman, dist: &Huffman, out: &mut Vec<u8>) -> Result<()> {
+fn inflate_block(
+    br: &mut BitReader,
+    lit: &Huffman,
+    dist: &Huffman,
+    out: &mut Vec<u8>,
+) -> Result<()> {
     loop {
         let sym = lit.decode(br)?;
         match sym {
@@ -219,7 +240,8 @@ fn inflate_block(br: &mut BitReader, lit: &Huffman, dist: &Huffman, out: &mut Ve
                 if dist_sym >= 30 {
                     return Err(InflateError::InvalidHuffmanCode);
                 }
-                let distance = DIST_BASE[dist_sym] as usize + br.read_bits(DIST_EXTRA[dist_sym])? as usize;
+                let distance =
+                    DIST_BASE[dist_sym] as usize + br.read_bits(DIST_EXTRA[dist_sym])? as usize;
                 if distance > out.len() {
                     return Err(InflateError::InvalidDistance {
                         distance,
@@ -308,11 +330,12 @@ mod tests {
     #[test]
     fn dynamic_huffman_block_from_a_real_encoder() {
         const COMPRESSED: &[u8] = &[
-            179, 9, 74, 77, 207, 44, 46, 73, 45, 114, 73, 45, 78, 46, 202, 44, 40, 201, 204, 207, 179, 179, 113, 78,
-            44, 73, 77, 207, 47, 170, 84, 240, 75, 204, 77, 181, 85, 10, 202, 207, 47, 81, 178, 179, 41, 112, 75, 77,
-            44, 41, 45, 74, 181, 11, 207, 76, 41, 201, 176, 209, 135, 243, 109, 244, 97, 26, 236, 108, 60, 243, 128,
-            172, 212, 34, 168, 78, 176, 74, 160, 214, 176, 196, 156, 210, 84, 59, 51, 19, 27, 125, 8, 203, 70, 31,
-            170, 14, 200, 194, 234, 130, 81, 103, 145, 224, 44, 0,
+            179, 9, 74, 77, 207, 44, 46, 73, 45, 114, 73, 45, 78, 46, 202, 44, 40, 201, 204, 207,
+            179, 179, 113, 78, 44, 73, 77, 207, 47, 170, 84, 240, 75, 204, 77, 181, 85, 10, 202,
+            207, 47, 81, 178, 179, 41, 112, 75, 77, 44, 41, 45, 74, 181, 11, 207, 76, 41, 201, 176,
+            209, 135, 243, 109, 244, 97, 26, 236, 108, 60, 243, 128, 172, 212, 34, 168, 78, 176,
+            74, 160, 214, 176, 196, 156, 210, 84, 59, 51, 19, 27, 125, 8, 203, 70, 31, 170, 14,
+            200, 194, 234, 130, 81, 103, 145, 224, 44, 0,
         ];
         let expected = "<RegisterDescription><Category Name=\"Root\"><pFeature>Width</pFeature></Category><Integer Name=\"Width\"><Value>64</Value></Integer></RegisterDescription>".repeat(3);
         let decompressed = inflate(COMPRESSED, Some(expected.len())).unwrap();

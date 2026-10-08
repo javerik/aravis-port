@@ -2,9 +2,9 @@ use std::time::Duration;
 
 use aravis_port_core::bootstrap::offset;
 use aravis_port_core::Error;
+use aravis_port_device::net::{GvcpTransaction, TransactionConfig};
 use aravis_port_device::{Device, DeviceConfig};
 use aravis_port_fakecamera::{feature, FakeCamera, FakeCameraConfig};
-use aravis_port_device::net::{GvcpTransaction, TransactionConfig};
 
 fn fast_device_config() -> DeviceConfig {
     DeviceConfig {
@@ -26,7 +26,10 @@ fn connect_acquires_control_and_reads_feature_registers() {
 
     // Defaults set by RegisterBank::new.
     assert_eq!(device.read_register(feature::WIDTH).unwrap(), 64);
-    assert_eq!(device.read_register(feature::EXPOSURE_TIME_US).unwrap(), 10_000);
+    assert_eq!(
+        device.read_register(feature::EXPOSURE_TIME_US).unwrap(),
+        10_000
+    );
 }
 
 #[test]
@@ -34,8 +37,13 @@ fn write_register_round_trips_through_the_wire() {
     let camera = FakeCamera::start(FakeCameraConfig::default()).unwrap();
     let device = Device::connect(camera.local_addr(), fast_device_config()).unwrap();
 
-    device.write_register(feature::EXPOSURE_TIME_US, 25_000).unwrap();
-    assert_eq!(device.read_register(feature::EXPOSURE_TIME_US).unwrap(), 25_000);
+    device
+        .write_register(feature::EXPOSURE_TIME_US, 25_000)
+        .unwrap();
+    assert_eq!(
+        device.read_register(feature::EXPOSURE_TIME_US).unwrap(),
+        25_000
+    );
     assert_eq!(camera.peek_register(feature::EXPOSURE_TIME_US), 25_000);
 }
 
@@ -46,7 +54,10 @@ fn read_memory_fetches_the_served_xml_byte_for_byte() {
 
     let expected = camera.xml_bytes();
     let fetched = device
-        .read_memory(aravis_port_fakecamera::REGISTER_SPACE_SIZE as u32, expected.len())
+        .read_memory(
+            aravis_port_fakecamera::REGISTER_SPACE_SIZE as u32,
+            expected.len(),
+        )
         .unwrap();
     assert_eq!(fetched, expected);
 }
@@ -83,7 +94,10 @@ fn genicam_feature_read_write_and_enum_and_command_through_the_full_stack() {
     assert_eq!(device.read::<String>("PixelFormat").unwrap(), "Mono8");
     device.write("PixelFormat", "Mono16".to_string()).unwrap();
     assert_eq!(device.read::<String>("PixelFormat").unwrap(), "Mono16");
-    assert_eq!(camera.peek_register(feature::PIXEL_FORMAT), aravis_port_fakecamera::pixel_format::MONO16);
+    assert_eq!(
+        camera.peek_register(feature::PIXEL_FORMAT),
+        aravis_port_fakecamera::pixel_format::MONO16
+    );
 
     // Command execution writes CommandValue into the linked register.
     device.execute_command("AcquisitionStart").unwrap();
@@ -91,8 +105,18 @@ fn genicam_feature_read_write_and_enum_and_command_through_the_full_stack() {
 
     // Root category lists the expected top-level features.
     let categories = device.categories().unwrap();
-    for expected in ["Width", "Height", "PixelFormat", "ExposureTime", "Gain", "AcquisitionStart"] {
-        assert!(categories.iter().any(|c| c == expected), "missing {expected} in {categories:?}");
+    for expected in [
+        "Width",
+        "Height",
+        "PixelFormat",
+        "ExposureTime",
+        "Gain",
+        "AcquisitionStart",
+    ] {
+        assert!(
+            categories.iter().any(|c| c == expected),
+            "missing {expected} in {categories:?}"
+        );
     }
 }
 
@@ -123,7 +147,11 @@ fn genicam_xml_is_retained_for_introspection() {
     let device = Device::connect(camera.local_addr(), fast_device_config()).unwrap();
 
     let xml = device.genicam_xml();
-    assert!(xml.contains("RegisterDescription"), "expected a GenICam document, got {:?}", &xml[..xml.len().min(120)]);
+    assert!(
+        xml.contains("RegisterDescription"),
+        "expected a GenICam document, got {:?}",
+        &xml[..xml.len().min(120)]
+    );
     assert!(xml.contains(r#"Name="Width""#));
     // Must be the document the device actually served, not a re-fetch or a reconstruction.
     assert_eq!(xml.as_bytes(), camera.xml_bytes().as_slice());
@@ -151,5 +179,9 @@ fn failed_connect_releases_control_privilege() {
     camera.poke_register(offset::XML_URL_0, u32::from_be_bytes(*b"Xxxx"));
 
     assert!(Device::connect(camera.local_addr(), fast_device_config()).is_err());
-    assert_eq!(camera.controller(), None, "failed connect left the device controlled");
+    assert_eq!(
+        camera.controller(),
+        None,
+        "failed connect left the device controlled"
+    );
 }

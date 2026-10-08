@@ -47,7 +47,10 @@ impl BufferPoolStreamSide {
 
 /// Create a linked pool with `n` pre-allocated buffers of `payload_capacity` bytes, already
 /// queued on the user side ready to be handed to a stream.
-pub fn new_buffer_pool(n: usize, payload_capacity: usize) -> (BufferPoolHandle, BufferPoolStreamSide) {
+pub fn new_buffer_pool(
+    n: usize,
+    payload_capacity: usize,
+) -> (BufferPoolHandle, BufferPoolStreamSide) {
     let (to_stream_tx, to_stream_rx) = mpsc::channel();
     let (to_user_tx, to_user_rx) = mpsc::channel();
 

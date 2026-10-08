@@ -121,9 +121,14 @@ impl FakeCamera {
             resend_unavailable: cfg.resend_unavailable,
         }));
 
-        let (gvcp_stop_tx, gvcp_join) = gvcp_server::spawn(socket, shared.clone(), cfg.heartbeat_timeout);
-        let (gvsp_stop_tx, gvsp_join) =
-            gvsp_server::spawn(shared.clone(), cfg.frame_period, cfg.packet_size, cfg.gvsp_loss_probability)?;
+        let (gvcp_stop_tx, gvcp_join) =
+            gvcp_server::spawn(socket, shared.clone(), cfg.heartbeat_timeout);
+        let (gvsp_stop_tx, gvsp_join) = gvsp_server::spawn(
+            shared.clone(),
+            cfg.frame_period,
+            cfg.packet_size,
+            cfg.gvsp_loss_probability,
+        )?;
 
         Ok(Self {
             shared,

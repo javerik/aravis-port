@@ -4,8 +4,8 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use aravis_port_core::bootstrap::{control_channel_privilege, offset, stream_packet_size};
-use aravis_port_core::{Error, Result};
 use aravis_port_core::memory::Buffer;
+use aravis_port_core::{Error, Result};
 use aravis_port_genicam::{ChunkDataAccess, FeatureInfo, GenApiTree};
 
 use crate::feature::FeatureValue;
@@ -57,7 +57,8 @@ impl Device {
         )?;
         let fetched = xml_fetch::fetch(&mut txn).and_then(|xml| {
             let genicam_xml = String::from_utf8_lossy(&xml).into_owned();
-            let genicam = GenApiTree::parse(&genicam_xml).map_err(|e| Error::GenIcam(e.to_string()))?;
+            let genicam =
+                GenApiTree::parse(&genicam_xml).map_err(|e| Error::GenIcam(e.to_string()))?;
             Ok((genicam_xml, genicam))
         });
         let (genicam_xml, genicam) = match fetched {
@@ -74,7 +75,8 @@ impl Device {
         let legacy_register_access = uses_legacy_register_access(genicam.register_description());
         let conn = Arc::new(Mutex::new(txn));
         let control_lost = Arc::new(AtomicBool::new(false));
-        let heartbeat = HeartbeatHandle::spawn(conn.clone(), cfg.heartbeat_period, control_lost.clone());
+        let heartbeat =
+            HeartbeatHandle::spawn(conn.clone(), cfg.heartbeat_period, control_lost.clone());
         Ok(Self {
             conn,
             genicam,
@@ -87,7 +89,10 @@ impl Device {
 
     /// Run `f` with the parsed GenICam tree and a `RegisterAccess` bridge over the shared
     /// transaction.
-    pub(crate) fn with_io<T>(&self, f: impl FnOnce(&GenApiTree, &mut GvcpTransactionIo) -> Result<T>) -> Result<T> {
+    pub(crate) fn with_io<T>(
+        &self,
+        f: impl FnOnce(&GenApiTree, &mut GvcpTransactionIo) -> Result<T>,
+    ) -> Result<T> {
         let mut io = GvcpTransactionIo {
             conn: self.conn.clone(),
             legacy_register_access: self.legacy_register_access,
@@ -114,7 +119,8 @@ impl Device {
     /// Read `GevSCPSPacketSize`'s low 16 bits (the actual packet size; upper bits are
     /// endianness/fragmentation/test-packet flags, see [`stream_packet_size`]).
     pub fn stream_packet_size(&self) -> Result<u16> {
-        Ok((self.read_register(offset::STREAM_CHANNEL_0_PACKET_SIZE)? & stream_packet_size::SIZE_MASK) as u16)
+        Ok((self.read_register(offset::STREAM_CHANNEL_0_PACKET_SIZE)?
+            & stream_packet_size::SIZE_MASK) as u16)
     }
 
     /// Set `GevSCPSPacketSize`'s low 16 bits, preserving the endianness and don't-fragment flags
@@ -124,18 +130,22 @@ impl Device {
     /// set a value that fits before starting acquisition.
     pub fn set_stream_packet_size(&self, size: u16) -> Result<()> {
         let current = self.read_register(offset::STREAM_CHANNEL_0_PACKET_SIZE)?;
-        let flags = current & !(stream_packet_size::SIZE_MASK | stream_packet_size::FIRE_TEST_PACKET);
+        let flags =
+            current & !(stream_packet_size::SIZE_MASK | stream_packet_size::FIRE_TEST_PACKET);
         self.write_register(offset::STREAM_CHANNEL_0_PACKET_SIZE, flags | size as u32)
     }
 
     /// Whether stream packets go out with the IP "don't fragment" flag (`GevSCPSDoNotFragment`).
     pub fn stream_do_not_fragment(&self) -> Result<bool> {
-        Ok(self.read_register(offset::STREAM_CHANNEL_0_PACKET_SIZE)? & stream_packet_size::DO_NOT_FRAGMENT != 0)
+        Ok(self.read_register(offset::STREAM_CHANNEL_0_PACKET_SIZE)?
+            & stream_packet_size::DO_NOT_FRAGMENT
+            != 0)
     }
 
     /// Set or clear `GevSCPSDoNotFragment`, keeping the packet size.
     pub fn set_stream_do_not_fragment(&self, on: bool) -> Result<()> {
-        let current = self.read_register(offset::STREAM_CHANNEL_0_PACKET_SIZE)? & !stream_packet_size::FIRE_TEST_PACKET;
+        let current = self.read_register(offset::STREAM_CHANNEL_0_PACKET_SIZE)?
+            & !stream_packet_size::FIRE_TEST_PACKET;
         let value = if on {
             current | stream_packet_size::DO_NOT_FRAGMENT
         } else {
@@ -151,8 +161,12 @@ impl Device {
     /// when a link on the way can't carry it. Only meaningful while not acquiring.
     pub fn fire_test_packet(&self, size: u16) -> Result<()> {
         let current = self.read_register(offset::STREAM_CHANNEL_0_PACKET_SIZE)?;
-        let flags = current & !(stream_packet_size::SIZE_MASK | stream_packet_size::FIRE_TEST_PACKET);
-        let value = flags | stream_packet_size::DO_NOT_FRAGMENT | stream_packet_size::FIRE_TEST_PACKET | size as u32;
+        let flags =
+            current & !(stream_packet_size::SIZE_MASK | stream_packet_size::FIRE_TEST_PACKET);
+        let value = flags
+            | stream_packet_size::DO_NOT_FRAGMENT
+            | stream_packet_size::FIRE_TEST_PACKET
+            | size as u32;
         self.write_register(offset::STREAM_CHANNEL_0_PACKET_SIZE, value)
     }
 
@@ -175,25 +189,36 @@ impl Device {
     /// Whether feature `name` is currently implemented and available (its `pIsImplemented` and
     /// `pIsAvailable` conditions hold). GenICam browsers show unavailable features as "-".
     pub fn is_available(&self, name: &str) -> Result<bool> {
-        self.with_io(|tree, io| tree.is_available(io, name).map_err(|e| Error::GenIcam(e.to_string())))
+        self.with_io(|tree, io| {
+            tree.is_available(io, name)
+                .map_err(|e| Error::GenIcam(e.to_string()))
+        })
     }
 
     /// Whether feature `name` is currently locked (a `pIsLocked` condition holds): readable, but
     /// not to be written now.
     pub fn is_locked(&self, name: &str) -> Result<bool> {
-        self.with_io(|tree, io| tree.is_locked(io, name).map_err(|e| Error::GenIcam(e.to_string())))
+        self.with_io(|tree, io| {
+            tree.is_locked(io, name)
+                .map_err(|e| Error::GenIcam(e.to_string()))
+        })
     }
 
     /// Whether a `pIsLocked` condition of feature `name` depends on node `target`. See
     /// [`GenApiTree::lock_depends_on`]; no device I/O.
     pub fn lock_depends_on(&self, name: &str, target: &str) -> Result<bool> {
-        self.genicam.lock_depends_on(name, target).map_err(|e| Error::GenIcam(e.to_string()))
+        self.genicam
+            .lock_depends_on(name, target)
+            .map_err(|e| Error::GenIcam(e.to_string()))
     }
 
     /// Availability, lock state, range and unit of feature `name`, evaluated under a single
     /// hold of the control channel. See [`GenApiTree::feature_info`].
     pub fn feature_info(&self, name: &str) -> Result<FeatureInfo> {
-        self.with_io(|tree, io| tree.feature_info(io, name).map_err(|e| Error::GenIcam(e.to_string())))
+        self.with_io(|tree, io| {
+            tree.feature_info(io, name)
+                .map_err(|e| Error::GenIcam(e.to_string()))
+        })
     }
 
     /// Write a feature by name (`device.write("ExposureTime", 1000.0)`).
@@ -203,7 +228,10 @@ impl Device {
 
     /// Execute a GenICam `Command` feature (e.g. `"AcquisitionStart"`).
     pub fn execute_command(&self, name: &str) -> Result<()> {
-        self.with_io(|tree, io| tree.execute_command(io, name).map_err(|e| Error::GenIcam(e.to_string())))
+        self.with_io(|tree, io| {
+            tree.execute_command(io, name)
+                .map_err(|e| Error::GenIcam(e.to_string()))
+        })
     }
 
     /// This device's GenICam XML, exactly as it was fetched at connect time.
@@ -219,7 +247,10 @@ impl Device {
     /// apart "this camera has no such feature" from "this feature exists but cannot be
     /// evaluated" — a distinction [`Device::read`] flattens into an error string.
     pub fn feature_kind(&self, name: &str) -> Option<&'static str> {
-        self.genicam.node_id(name).ok().map(|id| self.genicam.node_kind(id))
+        self.genicam
+            .node_id(name)
+            .ok()
+            .map(|id| self.genicam.node_kind(id))
     }
 
     /// The feature names directly under the `"Root"` category, in XML document order.

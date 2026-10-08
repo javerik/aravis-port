@@ -66,12 +66,20 @@ pub fn spawn(
             }
             let mut closed = match socket.recv(&mut buf) {
                 Ok(n) => match GvspHeader::parse(&buf[..n]) {
-                    Ok((status, header, payload)) => {
-                        reassembler.process_packet(status, header, payload, &pool, requester.as_mut(), Instant::now())
-                    }
+                    Ok((status, header, payload)) => reassembler.process_packet(
+                        status,
+                        header,
+                        payload,
+                        &pool,
+                        requester.as_mut(),
+                        Instant::now(),
+                    ),
                     Err(_) => Vec::new(),
                 },
-                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock || e.kind() == std::io::ErrorKind::TimedOut => {
+                Err(e)
+                    if e.kind() == std::io::ErrorKind::WouldBlock
+                        || e.kind() == std::io::ErrorKind::TimedOut =>
+                {
                     reassembler.tick(requester.as_mut(), Instant::now())
                 }
                 Err(_) => Vec::new(),

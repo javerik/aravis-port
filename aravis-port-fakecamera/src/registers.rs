@@ -91,19 +91,47 @@ impl RegisterBank {
     pub fn new(identity: &Identity, xml: Vec<u8>) -> Self {
         let mut registers = vec![0u8; REGISTER_SPACE_SIZE];
 
-        write_str(&mut registers, offset::MANUFACTURER_NAME, offset::MANUFACTURER_NAME_LEN, &identity.manufacturer);
-        write_str(&mut registers, offset::MODEL_NAME, offset::MODEL_NAME_LEN, &identity.model);
-        write_str(&mut registers, offset::DEVICE_VERSION, offset::DEVICE_VERSION_LEN, &identity.version);
-        write_str(&mut registers, offset::SERIAL_NUMBER, offset::SERIAL_NUMBER_LEN, &identity.serial);
+        write_str(
+            &mut registers,
+            offset::MANUFACTURER_NAME,
+            offset::MANUFACTURER_NAME_LEN,
+            &identity.manufacturer,
+        );
+        write_str(
+            &mut registers,
+            offset::MODEL_NAME,
+            offset::MODEL_NAME_LEN,
+            &identity.model,
+        );
+        write_str(
+            &mut registers,
+            offset::DEVICE_VERSION,
+            offset::DEVICE_VERSION_LEN,
+            &identity.version,
+        );
+        write_str(
+            &mut registers,
+            offset::SERIAL_NUMBER,
+            offset::SERIAL_NUMBER_LEN,
+            &identity.serial,
+        );
 
         let mac = identity.mac.octets();
-        write_u32(&mut registers, offset::MAC_HIGH, u32::from(mac[0]) << 8 | u32::from(mac[1]));
+        write_u32(
+            &mut registers,
+            offset::MAC_HIGH,
+            u32::from(mac[0]) << 8 | u32::from(mac[1]),
+        );
         write_u32(
             &mut registers,
             offset::MAC_LOW,
             u32::from_be_bytes([mac[2], mac[3], mac[4], mac[5]]),
         );
-        write_u32(&mut registers, offset::CURRENT_IP, u32::from(identity.current_ip));
+        write_u32(
+            &mut registers,
+            offset::CURRENT_IP,
+            u32::from(identity.current_ip),
+        );
 
         write_u32(&mut registers, offset::N_STREAM_CHANNELS, 1);
         write_u32(&mut registers, offset::HEARTBEAT_TIMEOUT, 3000);
@@ -112,7 +140,11 @@ impl RegisterBank {
 
         // XML URL: "Local:<name>;<hex address>;<hex size>" — address is the absolute (flat)
         // address where the XML blob starts, i.e. REGISTER_SPACE_SIZE.
-        let url = format!("Local:genicam.xml;{:x};{:x}", REGISTER_SPACE_SIZE, xml.len());
+        let url = format!(
+            "Local:genicam.xml;{:x};{:x}",
+            REGISTER_SPACE_SIZE,
+            xml.len()
+        );
         write_str(&mut registers, offset::XML_URL_0, offset::XML_URL_LEN, &url);
 
         // Sensible feature defaults, matching the shape of a real camera's power-on state.
@@ -129,7 +161,11 @@ impl RegisterBank {
         write_u32(&mut registers, feature::REVERSE_X, 0);
         write_u32(&mut registers, feature::OFFSET_X, 0);
         write_u32(&mut registers, feature::OFFSET_Y, 0);
-        write_u32(&mut registers, feature::DEVICE_SCAN_TYPE, scan_type::AREASCAN);
+        write_u32(
+            &mut registers,
+            feature::DEVICE_SCAN_TYPE,
+            scan_type::AREASCAN,
+        );
         write_u32(&mut registers, feature::SCAN3D_COORDINATE_SELECTOR, 0);
 
         Self { registers, xml }
@@ -256,7 +292,10 @@ mod tests {
     #[test]
     fn power_on_is_area_scan() {
         let bank = RegisterBank::new(&test_identity(), vec![]);
-        assert_eq!(bank.read_u32(feature::DEVICE_SCAN_TYPE), scan_type::AREASCAN);
+        assert_eq!(
+            bank.read_u32(feature::DEVICE_SCAN_TYPE),
+            scan_type::AREASCAN
+        );
     }
 
     #[test]

@@ -21,7 +21,9 @@ fn main() {
     println!("connected, has_control={}", device.has_control());
 
     // GevVersion register (0x0) is always safe to read on any GEV device.
-    let version = device.read_register(aravis_port_core::bootstrap::offset::VERSION).unwrap();
+    let version = device
+        .read_register(aravis_port_core::bootstrap::offset::VERSION)
+        .unwrap();
     println!("GevVersion register = 0x{version:08x}");
 
     // Read the current heartbeat timeout (safe, read-only check).
@@ -31,5 +33,8 @@ fn main() {
     println!("GevHeartbeatTimeout = {heartbeat_timeout} ms");
 
     std::thread::sleep(Duration::from_millis(2500));
-    println!("after 2.5s, has_control={} (heartbeat should have kept it alive)", device.has_control());
+    println!(
+        "after 2.5s, has_control={} (heartbeat should have kept it alive)",
+        device.has_control()
+    );
 }

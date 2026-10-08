@@ -47,7 +47,10 @@ pub fn eval_expr(expr: &Expr, vars: &HashMap<String, Value>) -> Result<Value, Fo
             }
         }
         Expr::Call(func, args) => {
-            let values: Vec<Value> = args.iter().map(|a| eval_expr(a, vars)).collect::<Result<_, _>>()?;
+            let values: Vec<Value> = args
+                .iter()
+                .map(|a| eval_expr(a, vars))
+                .collect::<Result<_, _>>()?;
             eval_call(*func, &values)
         }
     }

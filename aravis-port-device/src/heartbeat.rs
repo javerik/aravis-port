@@ -14,7 +14,11 @@ pub(crate) struct HeartbeatHandle {
 }
 
 impl HeartbeatHandle {
-    pub fn spawn(conn: Arc<Mutex<GvcpTransaction>>, period: Duration, control_lost: Arc<AtomicBool>) -> Self {
+    pub fn spawn(
+        conn: Arc<Mutex<GvcpTransaction>>,
+        period: Duration,
+        control_lost: Arc<AtomicBool>,
+    ) -> Self {
         let (stop_tx, stop_rx) = mpsc::channel();
         let join = thread::spawn(move || run(conn, period, control_lost, stop_rx));
         Self {
@@ -37,18 +41,27 @@ impl Drop for HeartbeatHandle {
     }
 }
 
-fn run(conn: Arc<Mutex<GvcpTransaction>>, period: Duration, control_lost: Arc<AtomicBool>, stop_rx: mpsc::Receiver<()>) {
+fn run(
+    conn: Arc<Mutex<GvcpTransaction>>,
+    period: Duration,
+    control_lost: Arc<AtomicBool>,
+    stop_rx: mpsc::Receiver<()>,
+) {
     loop {
         match stop_rx.recv_timeout(period) {
             Ok(()) | Err(RecvTimeoutError::Disconnected) => return,
             Err(RecvTimeoutError::Timeout) => {}
         }
 
-        let value = conn.lock().unwrap().read_register(offset::CONTROL_CHANNEL_PRIVILEGE);
+        let value = conn
+            .lock()
+            .unwrap()
+            .read_register(offset::CONTROL_CHANNEL_PRIVILEGE);
         match value {
             Ok(v) => {
-                let has_control =
-                    v & (control_channel_privilege::EXCLUSIVE | control_channel_privilege::CONTROL) != 0;
+                let has_control = v
+                    & (control_channel_privilege::EXCLUSIVE | control_channel_privilege::CONTROL)
+                    != 0;
                 control_lost.store(!has_control, Ordering::Relaxed);
                 if !has_control {
                     log::warn!("control-channel privilege lost (register value=0x{v:08x})");

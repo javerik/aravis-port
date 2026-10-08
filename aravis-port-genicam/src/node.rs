@@ -33,7 +33,10 @@ pub enum AddressTerm {
     Literal(u64),
     PAddress(NodeId),
     /// `<pIndex>`: adds `offset * value(index)` bytes.
-    Index { index: NodeId, offset: IndexOffset },
+    Index {
+        index: NodeId,
+        offset: IndexOffset,
+    },
 }
 
 /// The per-step byte stride of a `<pIndex>` term: its `Offset`/`pOffset` attribute, or the
@@ -240,7 +243,11 @@ pub fn decode_int(bytes: &[u8], spec: &RegisterAccessSpec) -> i64 {
     match spec.bit_mask {
         Some((lsb, msb)) => {
             let width = (msb - lsb + 1) as u32;
-            let mask: u64 = if width >= 64 { u64::MAX } else { ((1u64 << width) - 1) << lsb };
+            let mask: u64 = if width >= 64 {
+                u64::MAX
+            } else {
+                ((1u64 << width) - 1) << lsb
+            };
             let mut v = (raw & mask) >> lsb;
             if spec.sign == Sign::Signed && width < 64 && (v >> (width - 1)) & 1 == 1 {
                 v |= u64::MAX << width;
@@ -250,7 +257,11 @@ pub fn decode_int(bytes: &[u8], spec: &RegisterAccessSpec) -> i64 {
         None => {
             let len_bits = (bytes.len().min(8) * 8) as u32;
             let mut v = raw;
-            if spec.sign == Sign::Signed && len_bits > 0 && len_bits < 64 && (v >> (len_bits - 1)) & 1 == 1 {
+            if spec.sign == Sign::Signed
+                && len_bits > 0
+                && len_bits < 64
+                && (v >> (len_bits - 1)) & 1 == 1
+            {
                 v |= u64::MAX << len_bits;
             }
             v as i64
@@ -280,7 +291,11 @@ pub fn encode_int(current_bytes: &[u8], value: i64, spec: &RegisterAccessSpec) -
     let new_raw = match spec.bit_mask {
         Some((lsb, msb)) => {
             let width = (msb - lsb + 1) as u32;
-            let mask: u64 = if width >= 64 { u64::MAX } else { ((1u64 << width) - 1) << lsb };
+            let mask: u64 = if width >= 64 {
+                u64::MAX
+            } else {
+                ((1u64 << width) - 1) << lsb
+            };
             let current_raw = bytes_to_u64(current_bytes, spec.endianness);
             (current_raw & !mask) | ((value_bits << lsb) & mask)
         }
@@ -293,7 +308,12 @@ pub fn encode_int(current_bytes: &[u8], value: i64, spec: &RegisterAccessSpec) -
 mod tests {
     use super::*;
 
-    fn spec(length: u32, endianness: Endianness, bit_mask: Option<(u8, u8)>, sign: Sign) -> RegisterAccessSpec {
+    fn spec(
+        length: u32,
+        endianness: Endianness,
+        bit_mask: Option<(u8, u8)>,
+        sign: Sign,
+    ) -> RegisterAccessSpec {
         RegisterAccessSpec {
             length,
             endianness,

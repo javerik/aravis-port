@@ -96,7 +96,10 @@ pub fn pow(a: Value, b: Value) -> Value {
 pub fn compare(a: Value, b: Value) -> std::cmp::Ordering {
     match Value::both_int(a, b) {
         Some((x, y)) => x.cmp(&y),
-        None => a.as_f64().partial_cmp(&b.as_f64()).unwrap_or(std::cmp::Ordering::Equal),
+        None => a
+            .as_f64()
+            .partial_cmp(&b.as_f64())
+            .unwrap_or(std::cmp::Ordering::Equal),
     }
 }
 

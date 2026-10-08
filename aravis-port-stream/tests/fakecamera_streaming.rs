@@ -3,8 +3,8 @@ use std::time::Duration;
 
 use aravis_port_core::bootstrap::offset;
 use aravis_port_core::gvcp::PacketResend;
-use aravis_port_fakecamera::{feature, FakeCamera, FakeCameraConfig};
 use aravis_port_core::memory::{new_buffer_pool, BufferStatus};
+use aravis_port_fakecamera::{feature, FakeCamera, FakeCameraConfig};
 use aravis_port_stream::{spawn, ResendRequester, StreamConfig};
 
 struct NoopRequester;
@@ -37,7 +37,14 @@ fn receives_ten_frames_from_the_fake_camera() {
     point_camera_stream_channel_at(&camera, &socket);
 
     let (pool_user, pool_stream) = new_buffer_pool(4, 16 * 16);
-    let handle = spawn(socket, StreamConfig::default(), pool_stream, Box::new(NoopRequester), None).unwrap();
+    let handle = spawn(
+        socket,
+        StreamConfig::default(),
+        pool_stream,
+        Box::new(NoopRequester),
+        None,
+    )
+    .unwrap();
 
     let mut received = 0;
     for _ in 0..10 {
@@ -70,13 +77,27 @@ fn frame_ids_are_monotonically_increasing() {
     point_camera_stream_channel_at(&camera, &socket);
 
     let (pool_user, pool_stream) = new_buffer_pool(4, 8 * 8);
-    let handle = spawn(socket, StreamConfig::default(), pool_stream, Box::new(NoopRequester), None).unwrap();
+    let handle = spawn(
+        socket,
+        StreamConfig::default(),
+        pool_stream,
+        Box::new(NoopRequester),
+        None,
+    )
+    .unwrap();
 
     let mut last_frame_id = None;
     for _ in 0..5 {
-        let buf = pool_user.timeout_pop_buffer(Duration::from_secs(2)).unwrap();
+        let buf = pool_user
+            .timeout_pop_buffer(Duration::from_secs(2))
+            .unwrap();
         if let Some(last) = last_frame_id {
-            assert!(buf.frame_id > last, "frame ids must increase: {} then {}", last, buf.frame_id);
+            assert!(
+                buf.frame_id > last,
+                "frame ids must increase: {} then {}",
+                last,
+                buf.frame_id
+            );
         }
         last_frame_id = Some(buf.frame_id);
         pool_user.push_buffer(buf);

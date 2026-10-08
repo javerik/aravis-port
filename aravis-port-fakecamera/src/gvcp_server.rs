@@ -43,7 +43,12 @@ pub(crate) fn spawn(
     (stop_tx, join)
 }
 
-fn run(socket: UdpSocket, shared: Arc<Mutex<SharedState>>, stop_rx: mpsc::Receiver<()>, heartbeat_timeout: Duration) {
+fn run(
+    socket: UdpSocket,
+    shared: Arc<Mutex<SharedState>>,
+    stop_rx: mpsc::Receiver<()>,
+    heartbeat_timeout: Duration,
+) {
     let mut buf = [0u8; 1024];
     loop {
         if stop_rx.try_recv().is_ok() {
@@ -51,7 +56,12 @@ fn run(socket: UdpSocket, shared: Arc<Mutex<SharedState>>, stop_rx: mpsc::Receiv
         }
         match socket.recv_from(&mut buf) {
             Ok((n, from)) => handle_packet(&socket, &shared, &buf[..n], from, heartbeat_timeout),
-            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock || e.kind() == std::io::ErrorKind::TimedOut => continue,
+            Err(e)
+                if e.kind() == std::io::ErrorKind::WouldBlock
+                    || e.kind() == std::io::ErrorKind::TimedOut =>
+            {
+                continue
+            }
             Err(_) => continue,
         }
     }
@@ -64,7 +74,11 @@ fn can_write(state: &SharedState, from: SocketAddr) -> bool {
     }
 }
 
-fn touch_heartbeat_if_controller(state: &mut SharedState, from: SocketAddr, heartbeat_timeout: Duration) {
+fn touch_heartbeat_if_controller(
+    state: &mut SharedState,
+    from: SocketAddr,
+    heartbeat_timeout: Duration,
+) {
     if state.controller == Some(from) {
         state.heartbeat_deadline = Instant::now() + heartbeat_timeout;
     }
@@ -88,7 +102,11 @@ fn handle_packet(
     let Ok(header) = GvcpHeader::from_bytes(bytes) else {
         return;
     };
-    let body = if bytes.len() > HEADER_LEN { &bytes[HEADER_LEN..] } else { &[] };
+    let body = if bytes.len() > HEADER_LEN {
+        &bytes[HEADER_LEN..]
+    } else {
+        &[]
+    };
     let mut state = shared.lock().unwrap();
     expire_stale_controller(&mut state, from);
 
@@ -98,13 +116,23 @@ fn handle_packet(
             send_ack(socket, from, Command::DiscoveryAck, header.id, &ack_bytes);
         }
         Command::ReadRegisterCmd => {
-            let Ok(cmd) = ReadRegisterCmd::decode(body) else { return };
+            let Ok(cmd) = ReadRegisterCmd::decode(body) else {
+                return;
+            };
             let value = state.bank.read_u32(cmd.address);
             touch_heartbeat_if_controller(&mut state, from, heartbeat_timeout);
-            send_ack(socket, from, Command::ReadRegisterAck, header.id, &ReadRegisterAck { value }.encode());
+            send_ack(
+                socket,
+                from,
+                Command::ReadRegisterAck,
+                header.id,
+                &ReadRegisterAck { value }.encode(),
+            );
         }
         Command::WriteRegisterCmd => {
-            let Ok(cmd) = WriteRegisterCmd::decode(body) else { return };
+            let Ok(cmd) = WriteRegisterCmd::decode(body) else {
+                return;
+            };
             if !can_write(&state, from) {
                 send_error(socket, from, &header, ERROR_WRITE_ACCESS_DENIED);
                 return;
@@ -133,7 +161,9 @@ fn handle_packet(
             );
         }
         Command::ReadMemoryCmd => {
-            let Ok(cmd) = ReadMemoryCmd::decode(body) else { return };
+            let Ok(cmd) = ReadMemoryCmd::decode(body) else {
+                return;
+            };
             let data = state.bank.read(cmd.address, cmd.size as usize);
             touch_heartbeat_if_controller(&mut state, from, heartbeat_timeout);
             send_ack(
@@ -141,11 +171,17 @@ fn handle_packet(
                 from,
                 Command::ReadMemoryAck,
                 header.id,
-                &ReadMemoryAck { address: cmd.address, data }.encode(),
+                &ReadMemoryAck {
+                    address: cmd.address,
+                    data,
+                }
+                .encode(),
             );
         }
         Command::WriteMemoryCmd => {
-            let Ok(cmd) = WriteMemoryCmd::decode(body) else { return };
+            let Ok(cmd) = WriteMemoryCmd::decode(body) else {
+                return;
+            };
             if !can_write(&state, from) {
                 send_error(socket, from, &header, ERROR_WRITE_ACCESS_DENIED);
                 return;
@@ -162,7 +198,10 @@ fn handle_packet(
                 from,
                 Command::WriteMemoryAck,
                 header.id,
-                &WriteMemoryAck { address: cmd.address }.encode(),
+                &WriteMemoryAck {
+                    address: cmd.address,
+                }
+                .encode(),
             );
         }
         Command::PacketResendCmd => {
@@ -205,7 +244,9 @@ fn after_write(state: &mut SharedState, address: u32, len: usize) {
     if covers(address, len, feature::DEVICE_SCAN_TYPE) {
         let scan = state.bank.read_u32(feature::DEVICE_SCAN_TYPE);
         if !pixel_format_allowed(scan, state.bank.read_u32(feature::PIXEL_FORMAT)) {
-            state.bank.write_u32(feature::PIXEL_FORMAT, default_pixel_format(scan));
+            state
+                .bank
+                .write_u32(feature::PIXEL_FORMAT, default_pixel_format(scan));
         }
     }
 
@@ -217,7 +258,9 @@ fn after_write(state: &mut SharedState, address: u32, len: usize) {
     if value & stream_packet_size::FIRE_TEST_PACKET == 0 {
         return;
     }
-    state.bank.write_u32(register, value & !stream_packet_size::FIRE_TEST_PACKET);
+    state
+        .bank
+        .write_u32(register, value & !stream_packet_size::FIRE_TEST_PACKET);
 
     let size = (value & stream_packet_size::SIZE_MASK) as u16;
     if !state.test_packets || size > state.path_mtu {
@@ -230,14 +273,18 @@ fn after_write(state: &mut SharedState, address: u32, len: usize) {
     }
     // The whole datagram is `size` bytes, so the UDP payload is what's left after the IP (20)
     // and UDP (8) headers. Real devices fill it from an LFSR; any bytes do here.
-    let payload: Vec<u8> = (0..(size as usize).saturating_sub(20 + 8)).map(|i| i as u8).collect();
+    let payload: Vec<u8> = (0..(size as usize).saturating_sub(20 + 8))
+        .map(|i| i as u8)
+        .collect();
     if let Ok(socket) = UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0)) {
         let _ = socket.send_to(&payload, SocketAddrV4::new(dest_ip, port));
     }
 }
 
 fn handle_resend(state: &SharedState, body: &[u8], extended: bool) {
-    let Ok(resend) = PacketResend::decode(body, extended) else { return };
+    let Ok(resend) = PacketResend::decode(body, extended) else {
+        return;
+    };
     let (frame_id, first, last) = match resend {
         PacketResend::Standard {
             frame_id,
@@ -266,7 +313,9 @@ fn handle_resend(state: &SharedState, body: &[u8], extended: bool) {
     // A fresh, ephemeral socket for the resend: UDP is connectionless and the receiver doesn't
     // validate the sender's source port, so there's no need to share the GVSP sender's socket
     // (and thus no cross-thread synchronization needed for this rare, low-volume path).
-    let Ok(socket) = UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0)) else { return };
+    let Ok(socket) = UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0)) else {
+        return;
+    };
     if state.resend_unavailable {
         crate::gvsp_server::send_unavailable(&socket, dest, frame_id, first, last);
         return;
@@ -331,11 +380,27 @@ mod tests {
     #[test]
     fn a_pixel_format_outside_the_scan_mode_is_refused() {
         let line = bank(scan_type::LINESCAN3D);
-        assert!(refuses_write(&line, feature::PIXEL_FORMAT, &pixel_format::MONO16.to_be_bytes()));
-        assert!(!refuses_write(&line, feature::PIXEL_FORMAT, &pixel_format::COORD3D_C16.to_be_bytes()));
+        assert!(refuses_write(
+            &line,
+            feature::PIXEL_FORMAT,
+            &pixel_format::MONO16.to_be_bytes()
+        ));
+        assert!(!refuses_write(
+            &line,
+            feature::PIXEL_FORMAT,
+            &pixel_format::COORD3D_C16.to_be_bytes()
+        ));
         let area = bank(scan_type::AREASCAN);
-        assert!(refuses_write(&area, feature::PIXEL_FORMAT, &pixel_format::COORD3D_C16.to_be_bytes()));
-        assert!(!refuses_write(&area, feature::PIXEL_FORMAT, &pixel_format::MONO8.to_be_bytes()));
+        assert!(refuses_write(
+            &area,
+            feature::PIXEL_FORMAT,
+            &pixel_format::COORD3D_C16.to_be_bytes()
+        ));
+        assert!(!refuses_write(
+            &area,
+            feature::PIXEL_FORMAT,
+            &pixel_format::MONO8.to_be_bytes()
+        ));
     }
 
     #[test]

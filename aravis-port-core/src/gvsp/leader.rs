@@ -87,7 +87,10 @@ impl LeaderPayload {
 
     pub fn has_chunks(&self) -> bool {
         self.payload_type & HAS_CHUNKS_BIT != 0
-            || matches!(self.kind(), PayloadKind::ChunkData | PayloadKind::ExtendedChunkData)
+            || matches!(
+                self.kind(),
+                PayloadKind::ChunkData | PayloadKind::ExtendedChunkData
+            )
     }
 
     pub fn encode(&self) -> Vec<u8> {
@@ -110,7 +113,10 @@ impl LeaderPayload {
 
     pub fn decode(bytes: &[u8]) -> Result<Self> {
         if bytes.len() < 12 {
-            return Err(Error::Truncated { need: 12, got: bytes.len() });
+            return Err(Error::Truncated {
+                need: 12,
+                got: bytes.len(),
+            });
         }
         let flags = u16::from_be_bytes([bytes[0], bytes[1]]);
         let payload_type = u16::from_be_bytes([bytes[2], bytes[3]]);
@@ -129,7 +135,9 @@ impl LeaderPayload {
                 x_padding: u16::from_be_bytes(b[20..22].try_into().unwrap()),
                 y_padding: u16::from_be_bytes(b[22..24].try_into().unwrap()),
             })
-        } else if matches!(kind, PayloadKind::Multipart) && bytes.len() >= 12 + super::PART_INFOS_LEN {
+        } else if matches!(kind, PayloadKind::Multipart)
+            && bytes.len() >= 12 + super::PART_INFOS_LEN
+        {
             Some(super::PartInfos::decode(&bytes[12..])?.image)
         } else {
             None

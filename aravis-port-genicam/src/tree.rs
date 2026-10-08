@@ -6,9 +6,9 @@ use crate::dom::{self, XmlDom};
 use crate::error::{GenIcamError, Result};
 use crate::formula::{Formula, Value};
 use crate::node::{
-    AddressTerm, BooleanNode, Cachable, IndexOffset, CategoryNode, CommandNode, ConverterNode, Endianness,
-    EnumEntryNode, EnumerationNode, Node, NodeId, NumericNode, RegisterAccessSpec, Sign,
-    StringSource, SwissKnifeNode, ValueSource,
+    AddressTerm, BooleanNode, Cachable, CategoryNode, CommandNode, ConverterNode, Endianness,
+    EnumEntryNode, EnumerationNode, IndexOffset, Node, NodeId, NumericNode, RegisterAccessSpec,
+    Sign, StringSource, SwissKnifeNode, ValueSource,
 };
 
 struct CachedValue {
@@ -22,7 +22,11 @@ struct CachedValue {
 
 /// `(pVariable bindings, Constant name->text, Expression name->text)` collected from a
 /// `SwissKnife`/`Converter`-shaped element.
-type VariablesConstantsSubExprs = (Vec<(String, NodeId)>, Vec<(String, String)>, Vec<(String, String)>);
+type VariablesConstantsSubExprs = (
+    Vec<(String, NodeId)>,
+    Vec<(String, String)>,
+    Vec<(String, String)>,
+);
 
 /// Identification attributes of the document's `<RegisterDescription>` root element.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -37,7 +41,12 @@ pub struct RegisterDescription {
 impl RegisterDescription {
     fn from_root(dom: &XmlDom) -> Self {
         let root = dom.get(dom.root);
-        let attr = |name: &str| root.attrs.get(name).map(|v| v.trim().to_string()).unwrap_or_default();
+        let attr = |name: &str| {
+            root.attrs
+                .get(name)
+                .map(|v| v.trim().to_string())
+                .unwrap_or_default()
+        };
         let version = |name: &str| attr(name).parse::<u32>().unwrap_or(0);
         Self {
             vendor_name: attr("VendorName"),
@@ -139,9 +148,11 @@ fn parse_int_literal(text: &str) -> Result<i64> {
         return Ok(0);
     }
     if let Some(hex) = t.strip_prefix("0x").or_else(|| t.strip_prefix("0X")) {
-        i64::from_str_radix(hex, 16).map_err(|_| GenIcamError::Xml(format!("invalid hex literal '{text}'")))
+        i64::from_str_radix(hex, 16)
+            .map_err(|_| GenIcamError::Xml(format!("invalid hex literal '{text}'")))
     } else {
-        t.parse::<i64>().map_err(|_| GenIcamError::Xml(format!("invalid int literal '{text}'")))
+        t.parse::<i64>()
+            .map_err(|_| GenIcamError::Xml(format!("invalid int literal '{text}'")))
     }
 }
 
@@ -188,7 +199,9 @@ impl<'a> Builder<'a> {
             return Ok(indexed);
         }
         if let Some(v) = self.dom.child(idx, "Value") {
-            return Ok(ValueSource::LiteralInt(parse_int_literal(&self.dom.get(v).text)?));
+            return Ok(ValueSource::LiteralInt(parse_int_literal(
+                &self.dom.get(v).text,
+            )?));
         }
         Ok(ValueSource::LiteralInt(0))
     }
@@ -201,7 +214,9 @@ impl<'a> Builder<'a> {
             return Ok(indexed);
         }
         if let Some(v) = self.dom.child(idx, "Value") {
-            return Ok(ValueSource::LiteralFloat(parse_float_literal(&self.dom.get(v).text)?));
+            return Ok(ValueSource::LiteralFloat(parse_float_literal(
+                &self.dom.get(v).text,
+            )?));
         }
         Ok(ValueSource::LiteralFloat(0.0))
     }
@@ -232,7 +247,10 @@ impl<'a> Builder<'a> {
             entries.push((key(e)?, Self::literal(&self.dom.get(e).text, is_int)?));
         }
         for e in self.dom.children_with_tag(idx, "pValueIndexed") {
-            entries.push((key(e)?, ValueSource::PValue(self.resolve(&self.dom.get(e).text)?)));
+            entries.push((
+                key(e)?,
+                ValueSource::PValue(self.resolve(&self.dom.get(e).text)?),
+            ));
         }
         let default = match self.resolve_child_ref(idx, "pValueDefault")? {
             Some(target) => ValueSource::PValue(target),
@@ -253,7 +271,10 @@ impl<'a> Builder<'a> {
     /// only ever served as a UI hint before.
     fn numeric_bound(&self, idx: usize, tag: &str, is_int: bool) -> Result<Option<ValueSource>> {
         if let Some(p) = self.dom.child(idx, &format!("p{tag}")) {
-            return Ok(self.names.get(self.dom.get(p).text.trim()).map(|&id| ValueSource::PValue(id)));
+            return Ok(self
+                .names
+                .get(self.dom.get(p).text.trim())
+                .map(|&id| ValueSource::PValue(id)));
         }
         match self.dom.child(idx, tag) {
             Some(c) => Ok(Some(Self::literal(&self.dom.get(c).text, is_int)?)),
@@ -270,7 +291,11 @@ impl<'a> Builder<'a> {
 
     fn numeric_node(&self, idx: usize, is_int: bool) -> Result<NumericNode> {
         Ok(NumericNode {
-            value: if is_int { self.value_source_int(idx)? } else { self.value_source_float(idx)? },
+            value: if is_int {
+                self.value_source_int(idx)?
+            } else {
+                self.value_source_float(idx)?
+            },
             min: self.numeric_bound(idx, "Min", is_int)?,
             max: self.numeric_bound(idx, "Max", is_int)?,
             inc: self.numeric_bound(idx, "Inc", is_int)?,
@@ -283,16 +308,24 @@ impl<'a> Builder<'a> {
         // A `StructEntry` takes every register element it doesn't set itself from its
         // `StructReg`; for any other register node there is no parent to fall back to.
         let parent = self.struct_parent.get(&idx).copied();
-        let child = |tag: &str| self.dom.child(idx, tag).or_else(|| parent.and_then(|p| self.dom.child(p, tag)));
+        let child = |tag: &str| {
+            self.dom
+                .child(idx, tag)
+                .or_else(|| parent.and_then(|p| self.dom.child(p, tag)))
+        };
         let children = |tag: &str| {
-            let mut all = parent.map(|p| self.dom.children_with_tag(p, tag)).unwrap_or_default();
+            let mut all = parent
+                .map(|p| self.dom.children_with_tag(p, tag))
+                .unwrap_or_default();
             all.extend(self.dom.children_with_tag(idx, tag));
             all
         };
 
         let mut address_terms = Vec::new();
         for a in children("Address") {
-            address_terms.push(AddressTerm::Literal(parse_u64_literal(&self.dom.get(a).text)?));
+            address_terms.push(AddressTerm::Literal(parse_u64_literal(
+                &self.dom.get(a).text,
+            )?));
         }
         for a in children("pAddress") {
             address_terms.push(AddressTerm::PAddress(self.resolve(&self.dom.get(a).text)?));
@@ -309,7 +342,8 @@ impl<'a> Builder<'a> {
                 offset,
             });
         }
-        let chunk_id = child("pPort").and_then(|p| self.chunk_ports.get(self.dom.get(p).text.trim()).copied());
+        let chunk_id =
+            child("pPort").and_then(|p| self.chunk_ports.get(self.dom.get(p).text.trim()).copied());
 
         let length = match child("Length") {
             Some(c) => parse_u64_literal(&self.dom.get(c).text)? as u32,
@@ -335,14 +369,23 @@ impl<'a> Builder<'a> {
         // values directly, unreversed. Without this transform, `xml_lsb > xml_msb` (the common
         // case for BigEndian fields) underflows the `msb - lsb` width computation in
         // `node::decode_int`/`encode_int`.
-        let reverse_bit = |xml_bit: u8| -> u8 { (8 * length - 1).saturating_sub(xml_bit as u32) as u8 };
+        let reverse_bit =
+            |xml_bit: u8| -> u8 { (8 * length - 1).saturating_sub(xml_bit as u32) as u8 };
         let bit_mask = if let Some(bit) = child("Bit") {
             let n = parse_u64_literal(&self.dom.get(bit).text)? as u8;
-            let n = if endianness == Endianness::Big { reverse_bit(n) } else { n };
+            let n = if endianness == Endianness::Big {
+                reverse_bit(n)
+            } else {
+                n
+            };
             Some((n, n))
         } else {
-            let lsb = child("LSB").map(|c| parse_u64_literal(&self.dom.get(c).text)).transpose()?;
-            let msb = child("MSB").map(|c| parse_u64_literal(&self.dom.get(c).text)).transpose()?;
+            let lsb = child("LSB")
+                .map(|c| parse_u64_literal(&self.dom.get(c).text))
+                .transpose()?;
+            let msb = child("MSB")
+                .map(|c| parse_u64_literal(&self.dom.get(c).text))
+                .transpose()?;
             match (lsb, msb) {
                 (Some(l), Some(m)) => {
                     let (l, m) = (l as u8, m as u8);
@@ -421,31 +464,27 @@ impl<'a> Builder<'a> {
         let mut variables = Vec::new();
         for v in self.dom.children_with_tag(idx, "pVariable") {
             let el = self.dom.get(v);
-            let var_name = el
-                .attrs
-                .get("Name")
-                .cloned()
-                .ok_or_else(|| GenIcamError::Xml("pVariable missing Name attribute".to_string()))?;
+            let var_name =
+                el.attrs.get("Name").cloned().ok_or_else(|| {
+                    GenIcamError::Xml("pVariable missing Name attribute".to_string())
+                })?;
             variables.push((var_name, self.resolve(&el.text)?));
         }
         let mut constants = Vec::new();
         for c in self.dom.children_with_tag(idx, "Constant") {
             let el = self.dom.get(c);
-            let name = el
-                .attrs
-                .get("Name")
-                .cloned()
-                .ok_or_else(|| GenIcamError::Xml("Constant missing Name attribute".to_string()))?;
+            let name =
+                el.attrs.get("Name").cloned().ok_or_else(|| {
+                    GenIcamError::Xml("Constant missing Name attribute".to_string())
+                })?;
             constants.push((name, el.text.trim().to_string()));
         }
         let mut sub_expressions = Vec::new();
         for e in self.dom.children_with_tag(idx, "Expression") {
             let el = self.dom.get(e);
-            let name = el
-                .attrs
-                .get("Name")
-                .cloned()
-                .ok_or_else(|| GenIcamError::Xml("Expression missing Name attribute".to_string()))?;
+            let name = el.attrs.get("Name").cloned().ok_or_else(|| {
+                GenIcamError::Xml("Expression missing Name attribute".to_string())
+            })?;
             sub_expressions.push((name, el.text.trim().to_string()));
         }
         Ok((variables, constants, sub_expressions))
@@ -462,10 +501,14 @@ impl<'a> Builder<'a> {
     fn build_enumeration(&self, idx: usize) -> Result<EnumerationNode> {
         let mut entries = Vec::new();
         for e in self.dom.children_with_tag(idx, "EnumEntry") {
-            let name = self.dom.get(e).attrs.get("Name").cloned().ok_or_else(|| {
-                GenIcamError::Xml("EnumEntry missing Name attribute".to_string())
-            })?;
-            let node_id = *self.dom_to_node.get(&e).expect("EnumEntry reserved in pass 1");
+            let name =
+                self.dom.get(e).attrs.get("Name").cloned().ok_or_else(|| {
+                    GenIcamError::Xml("EnumEntry missing Name attribute".to_string())
+                })?;
+            let node_id = *self
+                .dom_to_node
+                .get(&e)
+                .expect("EnumEntry reserved in pass 1");
             entries.push((name, node_id));
         }
         Ok(EnumerationNode {
@@ -501,7 +544,11 @@ impl<'a> Builder<'a> {
             .dom
             .child(idx, "Formula")
             .ok_or_else(|| GenIcamError::Xml("SwissKnife missing Formula".to_string()))?;
-        let formula = Formula::parse(&self.dom.get(formula_idx).text, &constants, &sub_expressions)?;
+        let formula = Formula::parse(
+            &self.dom.get(formula_idx).text,
+            &constants,
+            &sub_expressions,
+        )?;
         Ok(SwissKnifeNode {
             formula,
             variables,
@@ -524,7 +571,11 @@ impl<'a> Builder<'a> {
             .ok_or_else(|| GenIcamError::Xml("Converter missing FormulaFrom".to_string()))?;
         Ok(ConverterNode {
             formula_to: Formula::parse(&self.dom.get(to_idx).text, &constants, &sub_expressions)?,
-            formula_from: Formula::parse(&self.dom.get(from_idx).text, &constants, &sub_expressions)?,
+            formula_from: Formula::parse(
+                &self.dom.get(from_idx).text,
+                &constants,
+                &sub_expressions,
+            )?,
             variables,
             value_link,
             is_integer,
@@ -546,7 +597,10 @@ impl<'a> Builder<'a> {
             "String" => Node::String(match self.resolve_child_ref(idx, "pValue")? {
                 Some(target) => StringSource::PValue(target),
                 None => StringSource::Literal(
-                    self.dom.child(idx, "Value").map(|v| self.dom.get(v).text.clone()).unwrap_or_default(),
+                    self.dom
+                        .child(idx, "Value")
+                        .map(|v| self.dom.get(v).text.clone())
+                        .unwrap_or_default(),
                 ),
             }),
             "IntReg" | "MaskedIntReg" | "StructEntry" => Node::IntReg(self.register_spec(idx)?),
@@ -583,9 +637,13 @@ impl GenApiTree {
                 if let (Some(name), Some(c)) = (el.attrs.get("Name"), dom.child(idx, "ChunkID")) {
                     // ChunkID is hexadecimal, with or without a 0x prefix.
                     let text = dom.get(c).text.trim();
-                    let hex = text.strip_prefix("0x").or_else(|| text.strip_prefix("0X")).unwrap_or(text);
-                    let id = u32::from_str_radix(hex, 16)
-                        .map_err(|_| GenIcamError::Xml(format!("invalid ChunkID '{text}' on port '{name}'")))?;
+                    let hex = text
+                        .strip_prefix("0x")
+                        .or_else(|| text.strip_prefix("0X"))
+                        .unwrap_or(text);
+                    let id = u32::from_str_radix(hex, 16).map_err(|_| {
+                        GenIcamError::Xml(format!("invalid ChunkID '{text}' on port '{name}'"))
+                    })?;
                     chunk_ports.insert(name.clone(), id);
                 }
             }
@@ -625,7 +683,9 @@ impl GenApiTree {
         // Pass 2: construct the real node value for every reserved slot, now that all names are
         // known. `Builder::build_node` only reads `dom`/`names`/`dom_to_node`, never
         // `builder.nodes` — that field exists solely to size `built_nodes` below.
-        let mut built_nodes: Vec<Node> = (0..n).map(|_| Node::Category(CategoryNode::default())).collect();
+        let mut built_nodes: Vec<Node> = (0..n)
+            .map(|_| Node::Category(CategoryNode::default()))
+            .collect();
         let mut availability = HashMap::new();
         let mut locked = HashMap::new();
         for (&idx, &id) in &builder.dom_to_node {
@@ -668,7 +728,12 @@ impl GenApiTree {
         self.available_by_id(io, id, name)
     }
 
-    fn available_by_id(&self, io: &mut impl RegisterAccess, id: NodeId, name: &str) -> Result<bool> {
+    fn available_by_id(
+        &self,
+        io: &mut impl RegisterAccess,
+        id: NodeId,
+        name: &str,
+    ) -> Result<bool> {
         for &predicate in self.availability.get(&id).into_iter().flatten() {
             if self.eval_node(io, predicate, name)?.as_i64() == 0 {
                 return Ok(false);
@@ -727,7 +792,11 @@ impl GenApiTree {
             match vs {
                 ValueSource::LiteralInt(_) | ValueSource::LiteralFloat(_) => {}
                 ValueSource::PValue(target) => out.push(*target),
-                ValueSource::Indexed { index, entries, default } => {
+                ValueSource::Indexed {
+                    index,
+                    entries,
+                    default,
+                } => {
                     out.push(*index);
                     for (_, v) in entries {
                         value_refs(v, out);
@@ -760,7 +829,9 @@ impl GenApiTree {
                 out.extend(c.variables.iter().map(|(_, v)| *v));
                 out.push(c.value_link);
             }
-            Node::IntReg(spec) | Node::FloatReg(spec) | Node::StringReg(spec) => address_refs(spec, out),
+            Node::IntReg(spec) | Node::FloatReg(spec) | Node::StringReg(spec) => {
+                address_refs(spec, out)
+            }
             Node::String(StringSource::PValue(target)) => out.push(*target),
             Node::String(StringSource::Literal(_)) | Node::Category(_) | Node::EnumEntry(_) => {}
         }
@@ -826,7 +897,10 @@ impl GenApiTree {
     }
 
     pub fn node_id(&self, name: &str) -> Result<NodeId> {
-        self.names.get(name).copied().ok_or_else(|| GenIcamError::NotFound(name.to_string()))
+        self.names
+            .get(name)
+            .copied()
+            .ok_or_else(|| GenIcamError::NotFound(name.to_string()))
     }
 
     pub fn node_kind(&self, id: NodeId) -> &'static str {
@@ -843,7 +917,12 @@ impl GenApiTree {
             Node::Category(c) => Ok(c
                 .children
                 .iter()
-                .filter_map(|child_id| self.names.iter().find(|(_, v)| **v == *child_id).map(|(k, _)| k.clone()))
+                .filter_map(|child_id| {
+                    self.names
+                        .iter()
+                        .find(|(_, v)| **v == *child_id)
+                        .map(|(k, _)| k.clone())
+                })
                 .collect()),
             other => Err(GenIcamError::TypeMismatch {
                 name: name.to_string(),
@@ -925,7 +1004,8 @@ impl GenApiTree {
             return Err(GenIcamError::NotWritable(context_name.to_string()));
         }
         let address = self.resolve_address(io, spec, context_name)?;
-        io.write_memory(address, &new_bytes).map_err(|e| GenIcamError::Io(e.to_string()))?;
+        io.write_memory(address, &new_bytes)
+            .map_err(|e| GenIcamError::Io(e.to_string()))?;
         self.bump_epoch(id);
         *self.cache[id.index()].borrow_mut() = if spec.cachable == Cachable::WriteThrough {
             Some(CachedValue {
@@ -939,19 +1019,28 @@ impl GenApiTree {
         Ok(())
     }
 
-    fn resolve_address(&self, io: &mut impl RegisterAccess, spec: &RegisterAccessSpec, context_name: &str) -> Result<u64> {
+    fn resolve_address(
+        &self,
+        io: &mut impl RegisterAccess,
+        spec: &RegisterAccessSpec,
+        context_name: &str,
+    ) -> Result<u64> {
         let mut addr = 0u64;
         for term in &spec.address_terms {
             // Wrapping: terms come from device values and formulas, and a bogus one must yield a
             // bad address (which the device rejects), not an overflow panic.
             addr = addr.wrapping_add(match term {
                 AddressTerm::Literal(v) => *v,
-                AddressTerm::PAddress(target) => self.eval_node(io, *target, context_name)?.as_i64() as u64,
+                AddressTerm::PAddress(target) => {
+                    self.eval_node(io, *target, context_name)?.as_i64() as u64
+                }
                 AddressTerm::Index { index, offset } => {
                     let stride = match offset {
                         IndexOffset::RegisterLength => spec.length as i64,
                         IndexOffset::Literal(v) => *v as i64,
-                        IndexOffset::PNode(node) => self.eval_node(io, *node, context_name)?.as_i64(),
+                        IndexOffset::PNode(node) => {
+                            self.eval_node(io, *node, context_name)?.as_i64()
+                        }
                     };
                     let index = self.eval_node(io, *index, context_name)?.as_i64();
                     stride.wrapping_mul(index) as u64
@@ -961,27 +1050,51 @@ impl GenApiTree {
         Ok(addr)
     }
 
-    fn eval_value_source(&self, io: &mut impl RegisterAccess, vs: &ValueSource, context_name: &str) -> Result<Value> {
+    fn eval_value_source(
+        &self,
+        io: &mut impl RegisterAccess,
+        vs: &ValueSource,
+        context_name: &str,
+    ) -> Result<Value> {
         match vs {
             ValueSource::LiteralInt(v) => Ok(Value::Int(*v)),
             ValueSource::LiteralFloat(v) => Ok(Value::Float(*v)),
             ValueSource::PValue(target) => self.eval_node(io, *target, context_name),
-            ValueSource::Indexed { index, entries, default } => {
+            ValueSource::Indexed {
+                index,
+                entries,
+                default,
+            } => {
                 let key = self.eval_node(io, *index, context_name)?.as_i64();
-                let source = entries.iter().find(|(k, _)| *k == key).map(|(_, v)| v).unwrap_or(default);
+                let source = entries
+                    .iter()
+                    .find(|(k, _)| *k == key)
+                    .map(|(_, v)| v)
+                    .unwrap_or(default);
                 self.eval_value_source(io, source, context_name)
             }
         }
     }
 
-    fn write_value_source(&self, io: &mut impl RegisterAccess, vs: &ValueSource, value: Value, context_name: &str) -> Result<()> {
+    fn write_value_source(
+        &self,
+        io: &mut impl RegisterAccess,
+        vs: &ValueSource,
+        value: Value,
+        context_name: &str,
+    ) -> Result<()> {
         match vs {
             ValueSource::PValue(target) => self.write_node(io, *target, value, context_name),
             _ => Err(GenIcamError::NotWritable(context_name.to_string())),
         }
     }
 
-    fn eval_node(&self, io: &mut impl RegisterAccess, id: NodeId, context_name: &str) -> Result<Value> {
+    fn eval_node(
+        &self,
+        io: &mut impl RegisterAccess,
+        id: NodeId,
+        context_name: &str,
+    ) -> Result<Value> {
         match &self.nodes[id.index()] {
             Node::Integer(n) | Node::Float(n) => self.eval_value_source(io, &n.value, context_name),
             Node::Boolean(n) => self.eval_value_source(io, &n.value, context_name),
@@ -994,26 +1107,43 @@ impl GenApiTree {
             }
             Node::FloatReg(spec) => {
                 let bytes = self.read_register_bytes(io, id, spec, context_name)?;
-                Ok(Value::Float(crate::node::decode_float(&bytes, spec.endianness)))
+                Ok(Value::Float(crate::node::decode_float(
+                    &bytes,
+                    spec.endianness,
+                )))
             }
             Node::Converter(conv) => self.eval_converter_read(io, conv, context_name),
             Node::SwissKnife(sk) => {
                 let result = self.eval_swiss_knife(io, sk, context_name)?;
-                Ok(if sk.is_integer { Value::Int(result.as_i64()) } else { result })
+                Ok(if sk.is_integer {
+                    Value::Int(result.as_i64())
+                } else {
+                    result
+                })
             }
-            other @ (Node::StringReg(_) | Node::String(_) | Node::Category(_)) => Err(GenIcamError::TypeMismatch {
-                name: context_name.to_string(),
-                expected: "numeric node",
-                found: other.kind_name(),
-            }),
+            other @ (Node::StringReg(_) | Node::String(_) | Node::Category(_)) => {
+                Err(GenIcamError::TypeMismatch {
+                    name: context_name.to_string(),
+                    expected: "numeric node",
+                    found: other.kind_name(),
+                })
+            }
         }
     }
 
-    fn write_node(&self, io: &mut impl RegisterAccess, id: NodeId, value: Value, context_name: &str) -> Result<()> {
+    fn write_node(
+        &self,
+        io: &mut impl RegisterAccess,
+        id: NodeId,
+        value: Value,
+        context_name: &str,
+    ) -> Result<()> {
         // Clone the small node value up front so the match arms own their data — keeps the
         // recursive calls below straightforward to read, at the cost of a cheap clone.
         let result = match self.nodes[id.index()].clone() {
-            Node::Integer(n) | Node::Float(n) => self.write_value_source(io, &n.value, value, context_name),
+            Node::Integer(n) | Node::Float(n) => {
+                self.write_value_source(io, &n.value, value, context_name)
+            }
             Node::Boolean(n) => self.write_value_source(io, &n.value, value, context_name),
             Node::Enumeration(e) => self.write_value_source(io, &e.value, value, context_name),
             Node::IntReg(spec) => {
@@ -1026,7 +1156,11 @@ impl GenApiTree {
                 self.write_register_bytes(io, id, &spec, new_bytes, context_name)
             }
             Node::FloatReg(spec) => {
-                let new_bytes = crate::node::encode_float(value.as_f64(), spec.length as usize, spec.endianness);
+                let new_bytes = crate::node::encode_float(
+                    value.as_f64(),
+                    spec.length as usize,
+                    spec.endianness,
+                );
                 self.write_register_bytes(io, id, &spec, new_bytes, context_name)
             }
             Node::Converter(conv) => self.eval_converter_write(io, &conv, value, context_name),
@@ -1035,9 +1169,7 @@ impl GenApiTree {
             | Node::Category(_)
             | Node::Command(_)
             | Node::StringReg(_)
-            | Node::String(_) => {
-                Err(GenIcamError::NotWritable(context_name.to_string()))
-            }
+            | Node::String(_) => Err(GenIcamError::NotWritable(context_name.to_string())),
         };
         // Bump this node's own epoch on any successful write, not just direct register writes —
         // invalidators may reference a wrapper feature node (e.g. a plain `Integer` with a
@@ -1049,7 +1181,12 @@ impl GenApiTree {
         result
     }
 
-    fn eval_swiss_knife(&self, io: &mut impl RegisterAccess, sk: &SwissKnifeNode, context_name: &str) -> Result<Value> {
+    fn eval_swiss_knife(
+        &self,
+        io: &mut impl RegisterAccess,
+        sk: &SwissKnifeNode,
+        context_name: &str,
+    ) -> Result<Value> {
         let mut vars = HashMap::new();
         for (name, target) in &sk.variables {
             vars.insert(name.clone(), self.eval_node(io, *target, context_name)?);
@@ -1057,17 +1194,35 @@ impl GenApiTree {
         Ok(sk.formula.eval(&vars)?)
     }
 
-    fn eval_converter_read(&self, io: &mut impl RegisterAccess, conv: &ConverterNode, context_name: &str) -> Result<Value> {
+    fn eval_converter_read(
+        &self,
+        io: &mut impl RegisterAccess,
+        conv: &ConverterNode,
+        context_name: &str,
+    ) -> Result<Value> {
         let mut vars = HashMap::new();
         for (name, target) in &conv.variables {
             vars.insert(name.clone(), self.eval_node(io, *target, context_name)?);
         }
-        vars.insert("TO".to_string(), self.eval_node(io, conv.value_link, context_name)?);
+        vars.insert(
+            "TO".to_string(),
+            self.eval_node(io, conv.value_link, context_name)?,
+        );
         let result = conv.formula_from.eval(&vars)?;
-        Ok(if conv.is_integer { Value::Int(result.as_i64()) } else { result })
+        Ok(if conv.is_integer {
+            Value::Int(result.as_i64())
+        } else {
+            result
+        })
     }
 
-    fn eval_converter_write(&self, io: &mut impl RegisterAccess, conv: &ConverterNode, value: Value, context_name: &str) -> Result<()> {
+    fn eval_converter_write(
+        &self,
+        io: &mut impl RegisterAccess,
+        conv: &ConverterNode,
+        value: Value,
+        context_name: &str,
+    ) -> Result<()> {
         let mut vars = HashMap::new();
         for (name, target) in &conv.variables {
             vars.insert(name.clone(), self.eval_node(io, *target, context_name)?);
@@ -1077,7 +1232,13 @@ impl GenApiTree {
         self.write_node(io, conv.value_link, result, context_name)
     }
 
-    fn read_string_register(&self, io: &mut impl RegisterAccess, id: NodeId, spec: &RegisterAccessSpec, context_name: &str) -> Result<String> {
+    fn read_string_register(
+        &self,
+        io: &mut impl RegisterAccess,
+        id: NodeId,
+        spec: &RegisterAccessSpec,
+        context_name: &str,
+    ) -> Result<String> {
         let bytes = self.read_register_bytes(io, id, spec, context_name)?;
         let end = bytes.iter().position(|&b| b == 0).unwrap_or(bytes.len());
         Ok(String::from_utf8_lossy(&bytes[..end]).into_owned())
@@ -1111,11 +1272,18 @@ impl GenApiTree {
         self.set_integer(io, name, if value { 1 } else { 0 })
     }
 
-    fn read_string_node(&self, io: &mut impl RegisterAccess, id: NodeId, context_name: &str) -> Result<String> {
+    fn read_string_node(
+        &self,
+        io: &mut impl RegisterAccess,
+        id: NodeId,
+        context_name: &str,
+    ) -> Result<String> {
         match &self.nodes[id.index()] {
             Node::StringReg(spec) => self.read_string_register(io, id, spec, context_name),
             Node::String(StringSource::Literal(text)) => Ok(text.clone()),
-            Node::String(StringSource::PValue(target)) => self.read_string_node(io, *target, context_name),
+            Node::String(StringSource::PValue(target)) => {
+                self.read_string_node(io, *target, context_name)
+            }
             other => Err(GenIcamError::TypeMismatch {
                 name: context_name.to_string(),
                 expected: "StringReg",
@@ -1124,7 +1292,13 @@ impl GenApiTree {
         }
     }
 
-    fn write_string_node(&self, io: &mut impl RegisterAccess, id: NodeId, value: &str, context_name: &str) -> Result<()> {
+    fn write_string_node(
+        &self,
+        io: &mut impl RegisterAccess,
+        id: NodeId,
+        value: &str,
+        context_name: &str,
+    ) -> Result<()> {
         match &self.nodes[id.index()] {
             Node::StringReg(spec) => {
                 let mut bytes = vec![0u8; spec.length as usize];
@@ -1133,7 +1307,9 @@ impl GenApiTree {
                 bytes[..n].copy_from_slice(&src[..n]);
                 self.write_register_bytes(io, id, spec, bytes, context_name)
             }
-            Node::String(StringSource::Literal(_)) => Err(GenIcamError::NotWritable(context_name.to_string())),
+            Node::String(StringSource::Literal(_)) => {
+                Err(GenIcamError::NotWritable(context_name.to_string()))
+            }
             Node::String(StringSource::PValue(target)) => {
                 self.write_string_node(io, *target, value, context_name)?;
                 self.bump_epoch(id);
@@ -1180,7 +1356,12 @@ impl GenApiTree {
         })
     }
 
-    pub fn set_enum_symbolic(&self, io: &mut impl RegisterAccess, name: &str, entry_name: &str) -> Result<()> {
+    pub fn set_enum_symbolic(
+        &self,
+        io: &mut impl RegisterAccess,
+        name: &str,
+        entry_name: &str,
+    ) -> Result<()> {
         let id = self.node_id(name)?;
         let (value_source, entry_value) = {
             let Node::Enumeration(e) = &self.nodes[id.index()] else {

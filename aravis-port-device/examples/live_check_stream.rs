@@ -23,11 +23,22 @@ impl ResendRequester for LoggingRequester {
 fn main() {
     env_logger::init();
     let mut args = std::env::args().skip(1);
-    let camera_ip: Ipv4Addr = args.next().expect("usage: live_check_stream <camera-ip> <local-ip>").parse().unwrap();
-    let local_ip: Ipv4Addr = args.next().expect("usage: live_check_stream <camera-ip> <local-ip>").parse().unwrap();
+    let camera_ip: Ipv4Addr = args
+        .next()
+        .expect("usage: live_check_stream <camera-ip> <local-ip>")
+        .parse()
+        .unwrap();
+    let local_ip: Ipv4Addr = args
+        .next()
+        .expect("usage: live_check_stream <camera-ip> <local-ip>")
+        .parse()
+        .unwrap();
 
-    let device = Device::connect(SocketAddrV4::new(camera_ip, aravis_port_core::gvcp::PORT), DeviceConfig::default())
-        .expect("connect failed");
+    let device = Device::connect(
+        SocketAddrV4::new(camera_ip, aravis_port_core::gvcp::PORT),
+        DeviceConfig::default(),
+    )
+    .expect("connect failed");
 
     let width = device.read::<i64>("Width").unwrap();
     let height = device.read::<i64>("Height").unwrap();
@@ -48,8 +59,13 @@ fn main() {
     // The device's power-on GevSCPSPacketSize can exceed the local link's MTU once IP/UDP
     // headers are added; pin it to a safely-under-1500-MTU value we also use for reassembly.
     const PACKET_SIZE: u16 = 1400;
-    device.set_stream_packet_size(PACKET_SIZE).expect("failed to set GevSCPSPacketSize");
-    println!("stream channel packet size (GevSCPSPacketSize) = {:?}", device.stream_packet_size());
+    device
+        .set_stream_packet_size(PACKET_SIZE)
+        .expect("failed to set GevSCPSPacketSize");
+    println!(
+        "stream channel packet size (GevSCPSPacketSize) = {:?}",
+        device.stream_packet_size()
+    );
 
     let scda = device.read_register(0xd18).unwrap();
     let scp_host_port = device.read_register(0xd00).unwrap();
@@ -64,13 +80,25 @@ fn main() {
         packet_size: PACKET_SIZE,
         ..StreamConfig::default()
     };
-    let handle = spawn(socket, cfg, pool_stream, Box::new(LoggingRequester), None).expect("failed to spawn receiver");
+    let handle = spawn(socket, cfg, pool_stream, Box::new(LoggingRequester), None)
+        .expect("failed to spawn receiver");
 
-    println!("AcquisitionStatus before start = {:?}", device.read::<i64>("AcquisitionStatus"));
-    device.execute_command("AcquisitionStart").expect("AcquisitionStart failed");
+    println!(
+        "AcquisitionStatus before start = {:?}",
+        device.read::<i64>("AcquisitionStatus")
+    );
+    device
+        .execute_command("AcquisitionStart")
+        .expect("AcquisitionStart failed");
     std::thread::sleep(Duration::from_millis(200));
-    println!("AcquisitionStatus after start = {:?}", device.read::<i64>("AcquisitionStatus"));
-    println!("AcquisitionStartReg (0xD314) read back = {:?}", device.read_register(0xD314));
+    println!(
+        "AcquisitionStatus after start = {:?}",
+        device.read::<i64>("AcquisitionStatus")
+    );
+    println!(
+        "AcquisitionStartReg (0xD314) read back = {:?}",
+        device.read_register(0xD314)
+    );
 
     let mut received = 0;
     for i in 0..10 {

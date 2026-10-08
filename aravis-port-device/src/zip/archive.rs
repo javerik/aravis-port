@@ -83,7 +83,10 @@ mod tests {
 
     #[test]
     fn rejects_non_zip_input() {
-        assert!(matches!(extract_first_file(b"not a zip"), Err(ZipError::NotAZip)));
+        assert!(matches!(
+            extract_first_file(b"not a zip"),
+            Err(ZipError::NotAZip)
+        ));
     }
 
     #[test]

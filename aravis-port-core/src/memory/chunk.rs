@@ -27,7 +27,9 @@ impl ChunkTlvIndex {
         while cursor > 8 {
             let size = u32::from_be_bytes(data[cursor - 4..cursor].try_into().unwrap()) as usize;
             let id = u32::from_be_bytes(data[cursor - 8..cursor - 4].try_into().unwrap());
-            let start = cursor.checked_sub(8 + size).ok_or(ChunkError::Malformed(cursor))?;
+            let start = cursor
+                .checked_sub(8 + size)
+                .ok_or(ChunkError::Malformed(cursor))?;
             offsets.insert(id, (start, size));
             cursor = start;
         }
@@ -86,6 +88,9 @@ mod tests {
         let mut data = vec![0u8; 4];
         data.extend_from_slice(&1u32.to_be_bytes()); // id
         data.extend_from_slice(&1_000_000u32.to_be_bytes()); // size (way too large)
-        assert!(matches!(ChunkTlvIndex::build(&data), Err(ChunkError::Malformed(_))));
+        assert!(matches!(
+            ChunkTlvIndex::build(&data),
+            Err(ChunkError::Malformed(_))
+        ));
     }
 }

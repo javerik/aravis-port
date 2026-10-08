@@ -3,7 +3,7 @@ use std::time::Instant;
 
 use aravis_port_core::gvcp::PacketResend;
 use aravis_port_core::gvsp::{ContentType, GvspHeader, GvspStatus, LeaderPayload, MultipartBlock};
-use aravis_port_core::memory::{Buffer, BufferStatus, BufferPoolStreamSide, PayloadType};
+use aravis_port_core::memory::{Buffer, BufferPoolStreamSide, BufferStatus, PayloadType};
 
 use crate::config::StreamConfig;
 use crate::ResendRequester;
@@ -32,7 +32,11 @@ fn per_packet_capacity(packet_size: u16, extended: bool) -> usize {
     let overhead = IP_HEADER_LEN
         + UDP_HEADER_LEN
         + STATUS_LEN
-        + if extended { EXTENDED_HEADER_LEN } else { STANDARD_HEADER_LEN };
+        + if extended {
+            EXTENDED_HEADER_LEN
+        } else {
+            STANDARD_HEADER_LEN
+        };
     (packet_size as usize).saturating_sub(overhead).max(1)
 }
 
@@ -71,7 +75,13 @@ struct FrameAssembly {
 }
 
 impl FrameAssembly {
-    fn new(frame_id: u64, extended: bool, mut buffer: Buffer, packet_capacity: usize, now: Instant) -> Self {
+    fn new(
+        frame_id: u64,
+        extended: bool,
+        mut buffer: Buffer,
+        packet_capacity: usize,
+        now: Instant,
+    ) -> Self {
         let allocated_size = buffer.data().len().max(buffer.data_mut().capacity());
         buffer.reset_for_reuse();
         buffer.frame_id = frame_id;
@@ -116,7 +126,14 @@ impl FrameAssembly {
         }
     }
 
-    fn ingest(&mut self, status: GvspStatus, header: &GvspHeader, payload: &[u8], now: Instant, cfg: &StreamConfig) {
+    fn ingest(
+        &mut self,
+        status: GvspStatus,
+        header: &GvspHeader,
+        payload: &[u8],
+        now: Instant,
+        cfg: &StreamConfig,
+    ) {
         self.last_packet_time = now;
         if status.is_error() {
             // Typically a resend answered with "packet unavailable" (already evicted from the
@@ -211,7 +228,8 @@ impl FrameAssembly {
                                 if self.buffer.data().len() < end {
                                     self.buffer.data_mut().resize(end, 0);
                                 }
-                                self.buffer.data_mut()[offset..end].copy_from_slice(&data[..end - offset]);
+                                self.buffer.data_mut()[offset..end]
+                                    .copy_from_slice(&data[..end - offset]);
                             }
                             _ => {
                                 log::warn!(
@@ -234,7 +252,13 @@ impl FrameAssembly {
         self.recompute_last_valid_contiguous();
     }
 
-    fn missing_check(&mut self, frame_id: u64, requester: &mut dyn ResendRequester, cfg: &StreamConfig, now: Instant) {
+    fn missing_check(
+        &mut self,
+        frame_id: u64,
+        requester: &mut dyn ResendRequester,
+        cfg: &StreamConfig,
+        now: Instant,
+    ) {
         if self.disable_resend {
             return;
         }
@@ -346,7 +370,10 @@ impl Reassembler {
             };
             let extended = header.is_extended();
             let capacity = per_packet_capacity(self.cfg.packet_size, extended);
-            self.frames.insert(frame_id, FrameAssembly::new(frame_id, extended, buffer, capacity, now));
+            self.frames.insert(
+                frame_id,
+                FrameAssembly::new(frame_id, extended, buffer, capacity, now),
+            );
         }
 
         if let Some(frame) = self.frames.get_mut(&frame_id) {
@@ -377,7 +404,9 @@ impl Reassembler {
             let newer_count = ids.len() - 1 - rank;
             if frame.is_complete() {
                 to_close.push((id, BufferStatus::Success));
-            } else if now.saturating_duration_since(frame.last_packet_time) >= self.cfg.frame_retention {
+            } else if now.saturating_duration_since(frame.last_packet_time)
+                >= self.cfg.frame_retention
+            {
                 // Only the leader (or nothing) ever arrived -> Timeout (the transfer never
                 // really started); some payload arrived but the frame is still incomplete ->
                 // MissingPackets (an actual mid-transfer loss).
@@ -411,8 +440,8 @@ impl Reassembler {
 mod tests {
     use super::*;
     use aravis_port_core::gvsp::{ContentType, GvspHeader, GvspStatus, ImageInfos, PayloadKind};
-    use aravis_port_core::memory::PayloadType;
     use aravis_port_core::memory::new_buffer_pool;
+    use aravis_port_core::memory::PayloadType;
 
     struct MockRequester {
         requests: Vec<PacketResend>,
@@ -479,11 +508,20 @@ mod tests {
         };
         let mut reassembler = Reassembler::new(cfg);
         let (_user, stream) = new_buffer_pool(2, 64);
-        let mut requester = MockRequester { requests: Vec::new() };
+        let mut requester = MockRequester {
+            requests: Vec::new(),
+        };
         let now = Instant::now();
 
         let leader = leader_bytes(true);
-        reassembler.process_packet(GvspStatus::Success, header(1, ContentType::Leader, 0), &leader, &stream, &mut requester, now);
+        reassembler.process_packet(
+            GvspStatus::Success,
+            header(1, ContentType::Leader, 0),
+            &leader,
+            &stream,
+            &mut requester,
+            now,
+        );
         for (packet_id, payload) in [(1u32, b"AAAAAA".to_vec()), (2, b"BBBBBB".to_vec())] {
             reassembler.process_packet(
                 GvspStatus::Success,
@@ -495,10 +533,20 @@ mod tests {
             );
         }
         let trailer = trailer_bytes();
-        let closed = reassembler.process_packet(GvspStatus::Success, header(1, ContentType::Trailer, 3), &trailer, &stream, &mut requester, now);
+        let closed = reassembler.process_packet(
+            GvspStatus::Success,
+            header(1, ContentType::Trailer, 3),
+            &trailer,
+            &stream,
+            &mut requester,
+            now,
+        );
 
         assert_eq!(closed.len(), 1);
-        assert_eq!(closed[0].status, aravis_port_core::memory::BufferStatus::Success);
+        assert_eq!(
+            closed[0].status,
+            aravis_port_core::memory::BufferStatus::Success
+        );
         assert_eq!(closed[0].data(), b"AAAAAABBBBBB");
     }
 
@@ -513,11 +561,20 @@ mod tests {
         };
         let mut reassembler = Reassembler::new(cfg);
         let (_user, stream) = new_buffer_pool(2, 64);
-        let mut requester = MockRequester { requests: Vec::new() };
+        let mut requester = MockRequester {
+            requests: Vec::new(),
+        };
         let now = Instant::now();
 
         let leader = leader_bytes(true);
-        reassembler.process_packet(GvspStatus::Success, header(1, ContentType::Leader, 0), &leader, &stream, &mut requester, now);
+        reassembler.process_packet(
+            GvspStatus::Success,
+            header(1, ContentType::Leader, 0),
+            &leader,
+            &stream,
+            &mut requester,
+            now,
+        );
         for (packet_id, payload) in [(2u32, b"BBBBBB".to_vec()), (1, b"AAAAAA".to_vec())] {
             reassembler.process_packet(
                 GvspStatus::Success,
@@ -529,10 +586,20 @@ mod tests {
             );
         }
         let trailer = trailer_bytes();
-        let closed = reassembler.process_packet(GvspStatus::Success, header(1, ContentType::Trailer, 3), &trailer, &stream, &mut requester, now);
+        let closed = reassembler.process_packet(
+            GvspStatus::Success,
+            header(1, ContentType::Trailer, 3),
+            &trailer,
+            &stream,
+            &mut requester,
+            now,
+        );
 
         assert_eq!(closed.len(), 1);
-        assert_eq!(closed[0].status, aravis_port_core::memory::BufferStatus::SizeMismatch);
+        assert_eq!(
+            closed[0].status,
+            aravis_port_core::memory::BufferStatus::SizeMismatch
+        );
     }
 
     fn multipart_leader_bytes(width: u32, height: u32) -> Vec<u8> {
@@ -584,21 +651,54 @@ mod tests {
         // with padding after the final block's real data.
         let mut reassembler = Reassembler::new(StreamConfig::default());
         let (_user, stream) = new_buffer_pool(2, 8);
-        let mut requester = MockRequester { requests: Vec::new() };
+        let mut requester = MockRequester {
+            requests: Vec::new(),
+        };
         let now = Instant::now();
 
         let leader = multipart_leader_bytes(4, 2);
-        reassembler.process_packet(GvspStatus::Success, header(1, ContentType::Leader, 0), &leader, &stream, &mut requester, now);
+        reassembler.process_packet(
+            GvspStatus::Success,
+            header(1, ContentType::Leader, 0),
+            &leader,
+            &stream,
+            &mut requester,
+            now,
+        );
         // The final block is padded past the 8-byte payload, as the C6 does at some packet sizes.
         let second = multipart_block(4, b"BBBBpadding");
-        reassembler.process_packet(GvspStatus::Success, header(1, ContentType::Multipart, 2), &second, &stream, &mut requester, now);
+        reassembler.process_packet(
+            GvspStatus::Success,
+            header(1, ContentType::Multipart, 2),
+            &second,
+            &stream,
+            &mut requester,
+            now,
+        );
         let first = multipart_block(0, b"AAAA");
-        reassembler.process_packet(GvspStatus::Success, header(1, ContentType::Multipart, 1), &first, &stream, &mut requester, now);
+        reassembler.process_packet(
+            GvspStatus::Success,
+            header(1, ContentType::Multipart, 1),
+            &first,
+            &stream,
+            &mut requester,
+            now,
+        );
         let trailer = trailer_bytes();
-        let closed = reassembler.process_packet(GvspStatus::Success, header(1, ContentType::Trailer, 3), &trailer, &stream, &mut requester, now);
+        let closed = reassembler.process_packet(
+            GvspStatus::Success,
+            header(1, ContentType::Trailer, 3),
+            &trailer,
+            &stream,
+            &mut requester,
+            now,
+        );
 
         assert_eq!(closed.len(), 1);
-        assert_eq!(closed[0].status, aravis_port_core::memory::BufferStatus::Success);
+        assert_eq!(
+            closed[0].status,
+            aravis_port_core::memory::BufferStatus::Success
+        );
         assert_eq!(closed[0].payload_type, PayloadType::Multipart);
         assert_eq!(closed[0].data(), b"AAAABBBB");
         let image = closed[0].image.unwrap();
@@ -609,20 +709,53 @@ mod tests {
     fn a_multipart_block_past_the_buffer_fails_the_frame_instead_of_growing_it() {
         let mut reassembler = Reassembler::new(StreamConfig::default());
         let (_user, stream) = new_buffer_pool(2, 8);
-        let mut requester = MockRequester { requests: Vec::new() };
+        let mut requester = MockRequester {
+            requests: Vec::new(),
+        };
         let now = Instant::now();
 
         let leader = multipart_leader_bytes(4, 2);
-        reassembler.process_packet(GvspStatus::Success, header(1, ContentType::Leader, 0), &leader, &stream, &mut requester, now);
+        reassembler.process_packet(
+            GvspStatus::Success,
+            header(1, ContentType::Leader, 0),
+            &leader,
+            &stream,
+            &mut requester,
+            now,
+        );
         let rogue = multipart_block(0x0000_ffff_0000_0000, b"XXXX");
-        reassembler.process_packet(GvspStatus::Success, header(1, ContentType::Multipart, 1), &rogue, &stream, &mut requester, now);
+        reassembler.process_packet(
+            GvspStatus::Success,
+            header(1, ContentType::Multipart, 1),
+            &rogue,
+            &stream,
+            &mut requester,
+            now,
+        );
         let truncated = [0u8; 3];
-        reassembler.process_packet(GvspStatus::Success, header(1, ContentType::Multipart, 2), &truncated, &stream, &mut requester, now);
+        reassembler.process_packet(
+            GvspStatus::Success,
+            header(1, ContentType::Multipart, 2),
+            &truncated,
+            &stream,
+            &mut requester,
+            now,
+        );
         let trailer = trailer_bytes();
-        let closed = reassembler.process_packet(GvspStatus::Success, header(1, ContentType::Trailer, 3), &trailer, &stream, &mut requester, now);
+        let closed = reassembler.process_packet(
+            GvspStatus::Success,
+            header(1, ContentType::Trailer, 3),
+            &trailer,
+            &stream,
+            &mut requester,
+            now,
+        );
 
         assert_eq!(closed.len(), 1);
-        assert_eq!(closed[0].status, aravis_port_core::memory::BufferStatus::SizeMismatch);
+        assert_eq!(
+            closed[0].status,
+            aravis_port_core::memory::BufferStatus::SizeMismatch
+        );
         assert!(closed[0].data().len() <= 8);
     }
 
@@ -636,21 +769,54 @@ mod tests {
         };
         let mut reassembler = Reassembler::new(cfg);
         let (_user, stream) = new_buffer_pool(2, 64);
-        let mut requester = MockRequester { requests: Vec::new() };
+        let mut requester = MockRequester {
+            requests: Vec::new(),
+        };
         let now = Instant::now();
 
         // Trailer (packet 3) arrives before leader (packet 0) and payloads (1, 2).
         let trailer = trailer_bytes();
-        reassembler.process_packet(GvspStatus::Success, header(1, ContentType::Trailer, 3), &trailer, &stream, &mut requester, now);
+        reassembler.process_packet(
+            GvspStatus::Success,
+            header(1, ContentType::Trailer, 3),
+            &trailer,
+            &stream,
+            &mut requester,
+            now,
+        );
         let payload2 = b"BBBB".to_vec();
-        reassembler.process_packet(GvspStatus::Success, header(1, ContentType::Payload, 2), &payload2, &stream, &mut requester, now);
+        reassembler.process_packet(
+            GvspStatus::Success,
+            header(1, ContentType::Payload, 2),
+            &payload2,
+            &stream,
+            &mut requester,
+            now,
+        );
         let leader = leader_bytes(true);
-        reassembler.process_packet(GvspStatus::Success, header(1, ContentType::Leader, 0), &leader, &stream, &mut requester, now);
+        reassembler.process_packet(
+            GvspStatus::Success,
+            header(1, ContentType::Leader, 0),
+            &leader,
+            &stream,
+            &mut requester,
+            now,
+        );
         let payload1 = b"AAAA".to_vec();
-        let closed = reassembler.process_packet(GvspStatus::Success, header(1, ContentType::Payload, 1), &payload1, &stream, &mut requester, now);
+        let closed = reassembler.process_packet(
+            GvspStatus::Success,
+            header(1, ContentType::Payload, 1),
+            &payload1,
+            &stream,
+            &mut requester,
+            now,
+        );
 
         assert_eq!(closed.len(), 1);
-        assert_eq!(closed[0].status, aravis_port_core::memory::BufferStatus::Success);
+        assert_eq!(
+            closed[0].status,
+            aravis_port_core::memory::BufferStatus::Success
+        );
         assert_eq!(closed[0].data(), b"AAAABBBB");
         assert_eq!(closed[0].image.unwrap().width, 4);
     }
@@ -666,32 +832,83 @@ mod tests {
         };
         let mut reassembler = Reassembler::new(cfg);
         let (_user, stream) = new_buffer_pool(4, 64);
-        let mut requester = MockRequester { requests: Vec::new() };
+        let mut requester = MockRequester {
+            requests: Vec::new(),
+        };
         let now = Instant::now();
 
         let leader = leader_bytes(true);
-        reassembler.process_packet(GvspStatus::Success, header(1, ContentType::Leader, 0), &leader, &stream, &mut requester, now);
-        reassembler.process_packet(GvspStatus::Success, header(1, ContentType::Payload, 1), b"AAAA", &stream, &mut requester, now);
+        reassembler.process_packet(
+            GvspStatus::Success,
+            header(1, ContentType::Leader, 0),
+            &leader,
+            &stream,
+            &mut requester,
+            now,
+        );
+        reassembler.process_packet(
+            GvspStatus::Success,
+            header(1, ContentType::Payload, 1),
+            b"AAAA",
+            &stream,
+            &mut requester,
+            now,
+        );
         let trailer = trailer_bytes();
-        let closed = reassembler.process_packet(GvspStatus::Success, header(1, ContentType::Trailer, 3), &trailer, &stream, &mut requester, now);
+        let closed = reassembler.process_packet(
+            GvspStatus::Success,
+            header(1, ContentType::Trailer, 3),
+            &trailer,
+            &stream,
+            &mut requester,
+            now,
+        );
         assert!(closed.is_empty());
         let later = now + std::time::Duration::from_millis(5);
         reassembler.tick(&mut requester, later);
         assert_eq!(requester.requests.len(), 1);
 
-        let closed = reassembler.process_packet(GvspStatus::Error(0x800c), header(1, ContentType::Payload, 2), &[], &stream, &mut requester, later);
-        assert!(closed.is_empty(), "closed {:?}", closed.iter().map(|b| b.status).collect::<Vec<_>>());
+        let closed = reassembler.process_packet(
+            GvspStatus::Error(0x800c),
+            header(1, ContentType::Payload, 2),
+            &[],
+            &stream,
+            &mut requester,
+            later,
+        );
+        assert!(
+            closed.is_empty(),
+            "closed {:?}",
+            closed.iter().map(|b| b.status).collect::<Vec<_>>()
+        );
 
         // No further resend for it (past the packet timeout, within the frame retention), and
         // two newer frames supersede it as incomplete.
         let later = later + std::time::Duration::from_millis(30);
         assert!(reassembler.tick(&mut requester, later).is_empty());
         assert_eq!(requester.requests.len(), 1);
-        reassembler.process_packet(GvspStatus::Success, header(2, ContentType::Leader, 0), &leader, &stream, &mut requester, later);
-        let closed = reassembler.process_packet(GvspStatus::Success, header(3, ContentType::Leader, 0), &leader, &stream, &mut requester, later);
+        reassembler.process_packet(
+            GvspStatus::Success,
+            header(2, ContentType::Leader, 0),
+            &leader,
+            &stream,
+            &mut requester,
+            later,
+        );
+        let closed = reassembler.process_packet(
+            GvspStatus::Success,
+            header(3, ContentType::Leader, 0),
+            &leader,
+            &stream,
+            &mut requester,
+            later,
+        );
         assert_eq!(closed.len(), 1);
         assert_eq!(closed[0].frame_id, 1);
-        assert_eq!(closed[0].status, aravis_port_core::memory::BufferStatus::MissingPackets);
+        assert_eq!(
+            closed[0].status,
+            aravis_port_core::memory::BufferStatus::MissingPackets
+        );
     }
 
     #[test]
@@ -701,22 +918,62 @@ mod tests {
         // the frame to 396 * 7912 = 3133152 bytes of a 3072x1020 image and closed it as Success.
         let mut reassembler = Reassembler::new(StreamConfig::default());
         let (_user, stream) = new_buffer_pool(4, 8);
-        let mut requester = MockRequester { requests: Vec::new() };
+        let mut requester = MockRequester {
+            requests: Vec::new(),
+        };
         let now = Instant::now();
 
         let leader = multipart_leader_bytes(4, 2);
-        reassembler.process_packet(GvspStatus::Success, header(1, ContentType::Leader, 0), &leader, &stream, &mut requester, now);
+        reassembler.process_packet(
+            GvspStatus::Success,
+            header(1, ContentType::Leader, 0),
+            &leader,
+            &stream,
+            &mut requester,
+            now,
+        );
         let first = multipart_block(0, b"AAAA");
-        reassembler.process_packet(GvspStatus::Success, header(1, ContentType::Multipart, 1), &first, &stream, &mut requester, now);
+        reassembler.process_packet(
+            GvspStatus::Success,
+            header(1, ContentType::Multipart, 1),
+            &first,
+            &stream,
+            &mut requester,
+            now,
+        );
         let trailer = trailer_bytes();
-        reassembler.process_packet(GvspStatus::Success, header(1, ContentType::Trailer, 3), &trailer, &stream, &mut requester, now);
-        let closed = reassembler.process_packet(GvspStatus::Error(0x800c), header(1, ContentType::Payload, 2), &[], &stream, &mut requester, now);
-        assert!(closed.is_empty(), "closed {:?}", closed.iter().map(|b| (b.status, b.data().len())).collect::<Vec<_>>());
+        reassembler.process_packet(
+            GvspStatus::Success,
+            header(1, ContentType::Trailer, 3),
+            &trailer,
+            &stream,
+            &mut requester,
+            now,
+        );
+        let closed = reassembler.process_packet(
+            GvspStatus::Error(0x800c),
+            header(1, ContentType::Payload, 2),
+            &[],
+            &stream,
+            &mut requester,
+            now,
+        );
+        assert!(
+            closed.is_empty(),
+            "closed {:?}",
+            closed
+                .iter()
+                .map(|b| (b.status, b.data().len()))
+                .collect::<Vec<_>>()
+        );
 
         let later = now + StreamConfig::default().frame_retention;
         let closed = reassembler.tick(&mut requester, later);
         assert_eq!(closed.len(), 1);
-        assert_eq!(closed[0].status, aravis_port_core::memory::BufferStatus::MissingPackets);
+        assert_eq!(
+            closed[0].status,
+            aravis_port_core::memory::BufferStatus::MissingPackets
+        );
     }
 
     #[test]
@@ -727,19 +984,39 @@ mod tests {
         };
         let mut reassembler = Reassembler::new(cfg);
         let (_user, stream) = new_buffer_pool(2, 64);
-        let mut requester = MockRequester { requests: Vec::new() };
+        let mut requester = MockRequester {
+            requests: Vec::new(),
+        };
         let now = Instant::now();
 
-        reassembler.process_packet(GvspStatus::Success, header(1, ContentType::Leader, 0), &leader_bytes(false), &stream, &mut requester, now);
+        reassembler.process_packet(
+            GvspStatus::Success,
+            header(1, ContentType::Leader, 0),
+            &leader_bytes(false),
+            &stream,
+            &mut requester,
+            now,
+        );
         // Packet 1 withheld; packet 2 arrives, creating a gap at slot 1.
-        reassembler.process_packet(GvspStatus::Success, header(1, ContentType::Payload, 2), b"BBBB", &stream, &mut requester, now);
+        reassembler.process_packet(
+            GvspStatus::Success,
+            header(1, ContentType::Payload, 2),
+            b"BBBB",
+            &stream,
+            &mut requester,
+            now,
+        );
 
         let later = now + std::time::Duration::from_millis(5);
         reassembler.tick(&mut requester, later);
 
         assert_eq!(requester.requests.len(), 1);
         match requester.requests[0] {
-            PacketResend::Standard { first_block, last_block, .. } => {
+            PacketResend::Standard {
+                first_block,
+                last_block,
+                ..
+            } => {
                 assert_eq!(first_block, 1);
                 assert_eq!(last_block, 1);
             }
@@ -760,14 +1037,33 @@ mod tests {
         };
         let mut reassembler = Reassembler::new(cfg);
         let (_user, stream) = new_buffer_pool(2, 64);
-        let mut requester = MockRequester { requests: Vec::new() };
+        let mut requester = MockRequester {
+            requests: Vec::new(),
+        };
         let now = Instant::now();
 
-        reassembler.process_packet(GvspStatus::Success, header(1, ContentType::Leader, 0), &leader_bytes(false), &stream, &mut requester, now);
-        reassembler.process_packet(GvspStatus::Success, header(1, ContentType::Payload, 2), b"BBBB", &stream, &mut requester, now);
+        reassembler.process_packet(
+            GvspStatus::Success,
+            header(1, ContentType::Leader, 0),
+            &leader_bytes(false),
+            &stream,
+            &mut requester,
+            now,
+        );
+        reassembler.process_packet(
+            GvspStatus::Success,
+            header(1, ContentType::Payload, 2),
+            b"BBBB",
+            &stream,
+            &mut requester,
+            now,
+        );
         reassembler.tick(&mut requester, now + std::time::Duration::from_millis(5));
 
-        assert!(requester.requests.is_empty(), "ratio of 0 must suppress all resend requests");
+        assert!(
+            requester.requests.is_empty(),
+            "ratio of 0 must suppress all resend requests"
+        );
     }
 
     #[test]
@@ -779,15 +1075,27 @@ mod tests {
             ..StreamConfig::default()
         };
         let mut reassembler = Reassembler::new(cfg);
-        let mut requester = MockRequester { requests: Vec::new() };
+        let mut requester = MockRequester {
+            requests: Vec::new(),
+        };
         let now = Instant::now();
         let (_user, stream) = new_buffer_pool(2, 64);
 
-        reassembler.process_packet(GvspStatus::Success, header(1, ContentType::Leader, 0), &leader_bytes(false), &stream, &mut requester, now);
+        reassembler.process_packet(
+            GvspStatus::Success,
+            header(1, ContentType::Leader, 0),
+            &leader_bytes(false),
+            &stream,
+            &mut requester,
+            now,
+        );
 
         let closed = reassembler.tick(&mut requester, now + std::time::Duration::from_millis(20));
         assert_eq!(closed.len(), 1);
-        assert_eq!(closed[0].status, aravis_port_core::memory::BufferStatus::Timeout);
+        assert_eq!(
+            closed[0].status,
+            aravis_port_core::memory::BufferStatus::Timeout
+        );
     }
 
     #[test]
@@ -797,16 +1105,35 @@ mod tests {
             ..StreamConfig::default()
         };
         let mut reassembler = Reassembler::new(cfg);
-        let mut requester = MockRequester { requests: Vec::new() };
+        let mut requester = MockRequester {
+            requests: Vec::new(),
+        };
         let now = Instant::now();
         let (_user, stream) = new_buffer_pool(2, 64);
 
-        reassembler.process_packet(GvspStatus::Success, header(1, ContentType::Leader, 0), &leader_bytes(false), &stream, &mut requester, now);
-        reassembler.process_packet(GvspStatus::Success, header(1, ContentType::Payload, 1), b"AAAA", &stream, &mut requester, now);
+        reassembler.process_packet(
+            GvspStatus::Success,
+            header(1, ContentType::Leader, 0),
+            &leader_bytes(false),
+            &stream,
+            &mut requester,
+            now,
+        );
+        reassembler.process_packet(
+            GvspStatus::Success,
+            header(1, ContentType::Payload, 1),
+            b"AAAA",
+            &stream,
+            &mut requester,
+            now,
+        );
         // Trailer never arrives.
 
         let closed = reassembler.tick(&mut requester, now + std::time::Duration::from_millis(20));
         assert_eq!(closed.len(), 1);
-        assert_eq!(closed[0].status, aravis_port_core::memory::BufferStatus::MissingPackets);
+        assert_eq!(
+            closed[0].status,
+            aravis_port_core::memory::BufferStatus::MissingPackets
+        );
     }
 }

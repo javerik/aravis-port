@@ -439,7 +439,10 @@ mod tests {
             "Scan3dCoordinateScale",
             "Scan3dCoordinateOffset",
         ] {
-            assert!(xml.contains(&format!("Name=\"{name}\"")), "missing feature {name}");
+            assert!(
+                xml.contains(&format!("Name=\"{name}\"")),
+                "missing feature {name}"
+            );
         }
     }
 }

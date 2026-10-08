@@ -55,7 +55,10 @@ impl<R: RegisterAccess> RegisterAccess for ChunkDataAccess<'_, R> {
 
     fn read_chunk(&mut self, chunk_id: u32, address: u64, len: usize) -> std::io::Result<Vec<u8>> {
         let chunk = self.index.get(self.data, chunk_id).ok_or_else(|| {
-            std::io::Error::new(std::io::ErrorKind::NotFound, format!("chunk 0x{chunk_id:08x} not in buffer"))
+            std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                format!("chunk 0x{chunk_id:08x} not in buffer"),
+            )
         })?;
         usize::try_from(address)
             .ok()
@@ -64,7 +67,10 @@ impl<R: RegisterAccess> RegisterAccess for ChunkDataAccess<'_, R> {
             .ok_or_else(|| {
                 std::io::Error::new(
                     std::io::ErrorKind::UnexpectedEof,
-                    format!("chunk 0x{chunk_id:08x}: {len} bytes at {address} exceed its {} bytes", chunk.len()),
+                    format!(
+                        "chunk 0x{chunk_id:08x}: {len} bytes at {address} exceed its {} bytes",
+                        chunk.len()
+                    ),
                 )
             })
     }

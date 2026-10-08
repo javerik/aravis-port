@@ -27,7 +27,11 @@ impl XmlDom {
     }
 
     pub fn child(&self, idx: usize, tag: &str) -> Option<usize> {
-        self.elements[idx].children.iter().copied().find(|&c| self.elements[c].tag == tag)
+        self.elements[idx]
+            .children
+            .iter()
+            .copied()
+            .find(|&c| self.elements[c].tag == tag)
     }
 
     pub fn children_with_tag(&self, idx: usize, tag: &str) -> Vec<usize> {
@@ -48,7 +52,10 @@ pub fn parse(xml: &str) -> Result<XmlDom, GenIcamError> {
     let mut stack: Vec<usize> = Vec::new();
     let mut buf = Vec::new();
 
-    fn parse_attrs(e: &quick_xml::events::BytesStart, reader: &Reader<&[u8]>) -> HashMap<String, String> {
+    fn parse_attrs(
+        e: &quick_xml::events::BytesStart,
+        reader: &Reader<&[u8]>,
+    ) -> HashMap<String, String> {
         let mut attrs = HashMap::new();
         for attr in e.attributes().flatten() {
             let key = String::from_utf8_lossy(attr.key.as_ref()).into_owned();
@@ -120,10 +127,9 @@ mod tests {
 
     #[test]
     fn parses_nested_elements_with_attributes_and_text() {
-        let dom = parse(
-            r#"<Root><Category Name="Cat"><pFeature>Width</pFeature></Category></Root>"#,
-        )
-        .unwrap();
+        let dom =
+            parse(r#"<Root><Category Name="Cat"><pFeature>Width</pFeature></Category></Root>"#)
+                .unwrap();
         assert_eq!(dom.get(dom.root).tag, "Root");
         let category = dom.child(dom.root, "Category").unwrap();
         assert_eq!(dom.get(category).attrs.get("Name").unwrap(), "Cat");
@@ -141,7 +147,9 @@ mod tests {
 
     #[test]
     fn malformed_xml_is_an_error_not_a_panic() {
-        assert!(parse("<Root><Unclosed></Root>").is_err() || parse("<Root><Unclosed></Root>").is_ok());
+        assert!(
+            parse("<Root><Unclosed></Root>").is_err() || parse("<Root><Unclosed></Root>").is_ok()
+        );
         assert!(parse("not xml at all <<<").is_err());
     }
 }

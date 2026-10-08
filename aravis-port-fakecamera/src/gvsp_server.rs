@@ -5,7 +5,9 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use aravis_port_core::bootstrap::offset;
-use aravis_port_core::gvsp::{ContentType, GvspHeader, GvspStatus, ImageInfos, LeaderPayload, PayloadKind, TrailerPayload};
+use aravis_port_core::gvsp::{
+    ContentType, GvspHeader, GvspStatus, ImageInfos, LeaderPayload, PayloadKind, TrailerPayload,
+};
 
 use crate::gvcp_server::SharedState;
 use crate::loss::LossInjector;
@@ -56,7 +58,16 @@ pub(crate) fn spawn(
 ) -> std::io::Result<(mpsc::Sender<()>, JoinHandle<()>)> {
     let socket = UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0))?;
     let (stop_tx, stop_rx) = mpsc::channel();
-    let join = thread::spawn(move || run(socket, shared, frame_period, packet_size, loss_probability, stop_rx));
+    let join = thread::spawn(move || {
+        run(
+            socket,
+            shared,
+            frame_period,
+            packet_size,
+            loss_probability,
+            stop_rx,
+        )
+    });
     Ok((stop_tx, join))
 }
 
@@ -69,7 +80,10 @@ fn run(
     stop_rx: mpsc::Receiver<()>,
 ) {
     let mut frame_id: u64 = 1;
-    let loss = LossInjector::new(loss_probability, 0x9e37_79b9_7f4a_7c15 ^ frame_period.as_nanos() as u64);
+    let loss = LossInjector::new(
+        loss_probability,
+        0x9e37_79b9_7f4a_7c15 ^ frame_period.as_nanos() as u64,
+    );
     loop {
         match stop_rx.recv_timeout(frame_period) {
             Ok(()) | Err(RecvTimeoutError::Disconnected) => return,
@@ -99,17 +113,45 @@ fn run(
             continue;
         }
 
-        send_frame(&socket, dest, frame_id, width, height, pixel_format, packet_size, chunk_mode, &loss);
+        send_frame(
+            &socket,
+            dest,
+            frame_id,
+            width,
+            height,
+            pixel_format,
+            packet_size,
+            chunk_mode,
+            &loss,
+        );
         frame_id = frame_id.wrapping_add(1).max(1);
     }
 }
 
 fn now_ns() -> u64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos() as u64).unwrap_or(0)
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos() as u64)
+        .unwrap_or(0)
 }
 
-fn send_gvsp(socket: &UdpSocket, dest: SocketAddrV4, frame_id: u64, content_type: ContentType, packet_id: u32, payload: &[u8]) {
-    send_gvsp_with_status(socket, dest, GvspStatus::Success, frame_id, content_type, packet_id, payload);
+fn send_gvsp(
+    socket: &UdpSocket,
+    dest: SocketAddrV4,
+    frame_id: u64,
+    content_type: ContentType,
+    packet_id: u32,
+    payload: &[u8],
+) {
+    send_gvsp_with_status(
+        socket,
+        dest,
+        GvspStatus::Success,
+        frame_id,
+        content_type,
+        packet_id,
+        payload,
+    );
 }
 
 fn send_gvsp_with_status(
@@ -136,7 +178,13 @@ const STATUS_PACKET_UNAVAILABLE: u16 = 0x800c;
 
 /// Answer a resend of packets `first..=last` with one data-less "packet unavailable" error
 /// packet each, as a device does once it has dropped them.
-pub(crate) fn send_unavailable(socket: &UdpSocket, dest: SocketAddrV4, frame_id: u64, first: u32, last: u32) {
+pub(crate) fn send_unavailable(
+    socket: &UdpSocket,
+    dest: SocketAddrV4,
+    frame_id: u64,
+    first: u32,
+    last: u32,
+) {
     for packet_id in first..=last {
         send_gvsp_with_status(
             socket,
@@ -176,7 +224,9 @@ fn build_frame_packets(
         image.extend_from_slice(&CHUNK_ID_FRAME_ID.to_be_bytes());
         image.extend_from_slice(&(chunk_data.len() as u32).to_be_bytes());
     }
-    let capacity = (packet_size as usize).saturating_sub(HEADER_OVERHEAD).max(1);
+    let capacity = (packet_size as usize)
+        .saturating_sub(HEADER_OVERHEAD)
+        .max(1);
     let mut packets = Vec::new();
 
     let leader = LeaderPayload {
@@ -222,7 +272,14 @@ fn send_frame(
     chunk_mode: bool,
     loss: &LossInjector,
 ) {
-    for (content_type, packet_id, payload) in build_frame_packets(frame_id, width, height, pixel_format, packet_size, chunk_mode) {
+    for (content_type, packet_id, payload) in build_frame_packets(
+        frame_id,
+        width,
+        height,
+        pixel_format,
+        packet_size,
+        chunk_mode,
+    ) {
         if loss.should_drop() {
             continue;
         }
@@ -245,7 +302,14 @@ pub(crate) fn resend_packets(
     first: u32,
     last: u32,
 ) {
-    for (content_type, packet_id, payload) in build_frame_packets(frame_id, width, height, pixel_format, packet_size, chunk_mode) {
+    for (content_type, packet_id, payload) in build_frame_packets(
+        frame_id,
+        width,
+        height,
+        pixel_format,
+        packet_size,
+        chunk_mode,
+    ) {
         if packet_id >= first && packet_id <= last {
             send_gvsp(socket, dest, frame_id, content_type, packet_id, &payload);
         }

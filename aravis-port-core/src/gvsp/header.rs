@@ -129,21 +129,32 @@ impl GvspHeader {
     /// header, and the remaining payload bytes.
     pub fn parse(bytes: &[u8]) -> Result<(GvspStatus, Self, &[u8])> {
         if bytes.len() < 2 {
-            return Err(Error::Truncated { need: 2, got: bytes.len() });
+            return Err(Error::Truncated {
+                need: 2,
+                got: bytes.len(),
+            });
         }
         let status = GvspStatus::from_u16(u16::from_be_bytes([bytes[0], bytes[1]]));
         let rest = &bytes[2..];
         if rest.len() < 6 {
-            return Err(Error::Truncated { need: 8, got: bytes.len() });
+            return Err(Error::Truncated {
+                need: 8,
+                got: bytes.len(),
+            });
         }
         let packet_infos_probe = u32::from_be_bytes([rest[2], rest[3], rest[4], rest[5]]);
         if packet_infos_probe & EXTENDED_ID_MODE_MASK != 0 {
             if rest.len() < 18 {
-                return Err(Error::Truncated { need: 20, got: bytes.len() });
+                return Err(Error::Truncated {
+                    need: 20,
+                    got: bytes.len(),
+                });
             }
             let flags = u16::from_be_bytes([rest[0], rest[1]]);
             let packet_infos = u32::from_be_bytes([rest[2], rest[3], rest[4], rest[5]]);
-            let content_type = ContentType::from_u8(((packet_infos & CONTENT_TYPE_MASK) >> CONTENT_TYPE_SHIFT) as u8);
+            let content_type = ContentType::from_u8(
+                ((packet_infos & CONTENT_TYPE_MASK) >> CONTENT_TYPE_SHIFT) as u8,
+            );
             let frame_id = u64::from_be_bytes(rest[6..14].try_into().unwrap());
             let packet_id = u32::from_be_bytes(rest[14..18].try_into().unwrap());
             Ok((
@@ -159,7 +170,9 @@ impl GvspHeader {
         } else {
             let frame_id = u16::from_be_bytes([rest[0], rest[1]]);
             let packet_infos = packet_infos_probe;
-            let content_type = ContentType::from_u8(((packet_infos & CONTENT_TYPE_MASK) >> CONTENT_TYPE_SHIFT) as u8);
+            let content_type = ContentType::from_u8(
+                ((packet_infos & CONTENT_TYPE_MASK) >> CONTENT_TYPE_SHIFT) as u8,
+            );
             let packet_id = packet_infos & PACKET_ID_MASK;
             Ok((
                 status,
@@ -184,7 +197,8 @@ impl GvspHeader {
                 packet_id,
             } => {
                 buf.extend_from_slice(&frame_id.to_be_bytes());
-                let packet_infos = ((content_type.to_u8() as u32) << CONTENT_TYPE_SHIFT) | (packet_id & PACKET_ID_MASK);
+                let packet_infos = ((content_type.to_u8() as u32) << CONTENT_TYPE_SHIFT)
+                    | (packet_id & PACKET_ID_MASK);
                 buf.extend_from_slice(&packet_infos.to_be_bytes());
             }
             GvspHeader::Extended {
@@ -194,7 +208,8 @@ impl GvspHeader {
                 packet_id,
             } => {
                 buf.extend_from_slice(&flags.to_be_bytes());
-                let packet_infos = EXTENDED_ID_MODE_MASK | ((content_type.to_u8() as u32) << CONTENT_TYPE_SHIFT);
+                let packet_infos =
+                    EXTENDED_ID_MODE_MASK | ((content_type.to_u8() as u32) << CONTENT_TYPE_SHIFT);
                 buf.extend_from_slice(&packet_infos.to_be_bytes());
                 buf.extend_from_slice(&frame_id.to_be_bytes());
                 buf.extend_from_slice(&packet_id.to_be_bytes());

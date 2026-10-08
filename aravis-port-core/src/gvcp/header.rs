@@ -158,7 +158,11 @@ impl GvcpHeader {
 
     /// If this is an `Error`/`UnknownError` packet, the `ArvGvcpError` code carried in `raw_flags`.
     pub fn error_code(&self) -> Option<u8> {
-        matches!(self.packet_type, PacketType::Error | PacketType::UnknownError).then_some(self.raw_flags)
+        matches!(
+            self.packet_type,
+            PacketType::Error | PacketType::UnknownError
+        )
+        .then_some(self.raw_flags)
     }
 }
 

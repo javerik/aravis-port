@@ -42,7 +42,10 @@ pub enum FormulaError {
     UnexpectedEnd,
 
     #[error("expected {expected}, found '{found}'")]
-    Expected { expected: &'static str, found: String },
+    Expected {
+        expected: &'static str,
+        found: String,
+    },
 
     #[error("unknown variable '{0}'")]
     UnknownVariable(String),

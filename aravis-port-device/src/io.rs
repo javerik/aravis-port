@@ -40,7 +40,9 @@ pub(crate) fn uses_legacy_register_access(description: &RegisterDescription) -> 
     description.schema_version < (1, 1, 0)
         || LEGACY_REGISTER_ACCESS_DEVICES
             .iter()
-            .any(|&(vendor, model)| description.vendor_name == vendor && description.model_name == model)
+            .any(|&(vendor, model)| {
+                description.vendor_name == vendor && description.model_name == model
+            })
 }
 
 /// Bridges `aravis-port-genicam`'s transport-agnostic `RegisterAccess` trait to the shared,
@@ -81,7 +83,11 @@ impl RegisterAccess for GvcpTransactionIo {
 mod tests {
     use super::*;
 
-    fn description(vendor: &str, model: &str, schema_version: (u32, u32, u32)) -> RegisterDescription {
+    fn description(
+        vendor: &str,
+        model: &str,
+        schema_version: (u32, u32, u32),
+    ) -> RegisterDescription {
         RegisterDescription {
             vendor_name: vendor.to_string(),
             model_name: model.to_string(),
@@ -91,10 +97,26 @@ mod tests {
 
     #[test]
     fn legacy_register_access_follows_schema_version_and_quirk_list() {
-        assert!(uses_legacy_register_access(&description("Any", "Camera", (1, 0, 9))));
-        assert!(uses_legacy_register_access(&description("Any", "Camera", (0, 0, 0))));
-        assert!(!uses_legacy_register_access(&description("Any", "Camera", (1, 1, 0))));
-        assert!(!uses_legacy_register_access(&description("Any", "Camera", (2, 0, 0))));
+        assert!(uses_legacy_register_access(&description(
+            "Any",
+            "Camera",
+            (1, 0, 9)
+        )));
+        assert!(uses_legacy_register_access(&description(
+            "Any",
+            "Camera",
+            (0, 0, 0)
+        )));
+        assert!(!uses_legacy_register_access(&description(
+            "Any",
+            "Camera",
+            (1, 1, 0)
+        )));
+        assert!(!uses_legacy_register_access(&description(
+            "Any",
+            "Camera",
+            (2, 0, 0)
+        )));
         // The live C6-2040-GigE's XML declares schema 1.1.0 but needs legacy access.
         assert!(uses_legacy_register_access(&description(
             "AT_Automation_Technology_GmbH",

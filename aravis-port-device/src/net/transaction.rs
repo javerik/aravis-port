@@ -1,12 +1,12 @@
 use std::net::{SocketAddrV4, UdpSocket};
 use std::time::{Duration, Instant};
 
+use aravis_port_core::gvcp::PacketResend;
 use aravis_port_core::gvcp::{
     self, next_packet_id, Command, GvcpHeader, GvcpPayload, PacketFlags, PacketType, PendingAck,
     ReadMemoryAck, ReadMemoryCmd, ReadRegisterAck, ReadRegisterCmd, WriteMemoryAck, WriteMemoryCmd,
     WriteRegisterAck, WriteRegisterCmd, GVCP_DATA_SIZE_MAX, HEADER_LEN,
 };
-use aravis_port_core::gvcp::PacketResend;
 use aravis_port_core::{Error, Result};
 
 /// Retry/timeout configuration for a [`GvcpTransaction`].
@@ -54,7 +54,12 @@ impl GvcpTransaction {
 
     /// Send `command`/`payload`, retrying up to `cfg.retries` times, and return the matching
     /// ack's header and raw body. A `PENDING_ACK` extends the deadline without consuming a retry.
-    pub fn request_raw(&mut self, command: Command, ack_command: Command, payload: &[u8]) -> Result<Vec<u8>> {
+    pub fn request_raw(
+        &mut self,
+        command: Command,
+        ack_command: Command,
+        payload: &[u8],
+    ) -> Result<Vec<u8>> {
         let id = self.take_id();
         let header = GvcpHeader {
             packet_type: PacketType::Cmd,
@@ -86,7 +91,10 @@ impl GvcpTransaction {
                         if resp.id != id {
                             continue;
                         }
-                        if matches!(resp.packet_type, PacketType::Error | PacketType::UnknownError) {
+                        if matches!(
+                            resp.packet_type,
+                            PacketType::Error | PacketType::UnknownError
+                        ) {
                             return Err(Error::GvcpError(resp.error_code().unwrap_or(0xff)));
                         }
                         if resp.packet_type != PacketType::Ack {
@@ -94,7 +102,8 @@ impl GvcpTransaction {
                         }
                         if resp.command == Command::PendingAck {
                             if let Ok(pending) = PendingAck::decode(&recv_buf[HEADER_LEN..n]) {
-                                deadline = Instant::now() + Duration::from_millis(pending.timeout_ms as u64);
+                                deadline = Instant::now()
+                                    + Duration::from_millis(pending.timeout_ms as u64);
                             }
                             continue;
                         }
@@ -126,13 +135,18 @@ impl GvcpTransaction {
     }
 
     pub fn read_register(&mut self, address: u32) -> Result<u32> {
-        let ack: ReadRegisterAck = self.request(Command::ReadRegisterCmd, &ReadRegisterCmd { address }.encode())?;
+        let ack: ReadRegisterAck = self.request(
+            Command::ReadRegisterCmd,
+            &ReadRegisterCmd { address }.encode(),
+        )?;
         Ok(ack.value)
     }
 
     pub fn write_register(&mut self, address: u32, value: u32) -> Result<()> {
-        let _: WriteRegisterAck =
-            self.request(Command::WriteRegisterCmd, &WriteRegisterCmd { address, value }.encode())?;
+        let _: WriteRegisterAck = self.request(
+            Command::WriteRegisterCmd,
+            &WriteRegisterCmd { address, value }.encode(),
+        )?;
         Ok(())
     }
 

@@ -57,23 +57,65 @@ macro_rules! ensure {
 }
 
 const TESTS: &[(&str, TestFn)] = &[
-    ("discovery_finds_camera_by_serial", discovery_finds_camera_by_serial),
+    (
+        "discovery_finds_camera_by_serial",
+        discovery_finds_camera_by_serial,
+    ),
     ("connect_acquires_control", connect_acquires_control),
-    ("connect_by_ip_without_discovery", connect_by_ip_without_discovery),
-    ("second_connection_is_denied_while_controlled", second_connection_is_denied_while_controlled),
+    (
+        "connect_by_ip_without_discovery",
+        connect_by_ip_without_discovery,
+    ),
+    (
+        "second_connection_is_denied_while_controlled",
+        second_connection_is_denied_while_controlled,
+    ),
     ("heartbeat_keeps_control", heartbeat_keeps_control),
-    ("genicam_xml_is_fetched_and_parsed", genicam_xml_is_fetched_and_parsed),
-    ("identity_features_match_discovery", identity_features_match_discovery),
-    ("image_format_features_are_readable", image_format_features_are_readable),
-    ("packet_size_register_round_trip", packet_size_register_round_trip),
-    ("float_feature_write_round_trip", float_feature_write_round_trip),
-    ("enum_feature_write_round_trip", enum_feature_write_round_trip),
-    ("stream_callback_receives_frames", stream_callback_receives_frames),
-    ("stream_channel_zero_copy_frames", stream_channel_zero_copy_frames),
-    ("stream_with_custom_packet_size", stream_with_custom_packet_size),
-    ("auto_packet_size_finds_a_streaming_size", auto_packet_size_finds_a_streaming_size),
+    (
+        "genicam_xml_is_fetched_and_parsed",
+        genicam_xml_is_fetched_and_parsed,
+    ),
+    (
+        "identity_features_match_discovery",
+        identity_features_match_discovery,
+    ),
+    (
+        "image_format_features_are_readable",
+        image_format_features_are_readable,
+    ),
+    (
+        "packet_size_register_round_trip",
+        packet_size_register_round_trip,
+    ),
+    (
+        "float_feature_write_round_trip",
+        float_feature_write_round_trip,
+    ),
+    (
+        "enum_feature_write_round_trip",
+        enum_feature_write_round_trip,
+    ),
+    (
+        "stream_callback_receives_frames",
+        stream_callback_receives_frames,
+    ),
+    (
+        "stream_channel_zero_copy_frames",
+        stream_channel_zero_copy_frames,
+    ),
+    (
+        "stream_with_custom_packet_size",
+        stream_with_custom_packet_size,
+    ),
+    (
+        "auto_packet_size_finds_a_streaming_size",
+        auto_packet_size_finds_a_streaming_size,
+    ),
     ("stream_can_restart", stream_can_restart),
-    ("chunk_data_matches_genicam_browser", chunk_data_matches_genicam_browser),
+    (
+        "chunk_data_matches_genicam_browser",
+        chunk_data_matches_genicam_browser,
+    ),
 ];
 
 // ---------------------------------------------------------------------------------------------
@@ -82,16 +124,33 @@ const TESTS: &[(&str, TestFn)] = &[
 
 fn discovery_finds_camera_by_serial(cam: &LiveCam) -> TestResult {
     let info = &cam.info;
-    ensure!(!info.manufacturer.trim().is_empty(), "empty manufacturer in discovery ack");
-    ensure!(!info.model.trim().is_empty(), "empty model in discovery ack");
-    ensure!(info.id.contains(info.serial.trim()), "id {:?} does not contain serial {:?}", info.id, info.serial);
-    ensure!(!info.current_ip.is_unspecified(), "camera reported current IP 0.0.0.0");
+    ensure!(
+        !info.manufacturer.trim().is_empty(),
+        "empty manufacturer in discovery ack"
+    );
+    ensure!(
+        !info.model.trim().is_empty(),
+        "empty model in discovery ack"
+    );
+    ensure!(
+        info.id.contains(info.serial.trim()),
+        "id {:?} does not contain serial {:?}",
+        info.id,
+        info.serial
+    );
+    ensure!(
+        !info.current_ip.is_unspecified(),
+        "camera reported current IP 0.0.0.0"
+    );
     Ok(Outcome::Passed)
 }
 
 fn connect_acquires_control(cam: &LiveCam) -> TestResult {
     let camera = Camera::new(&cam.info)?;
-    ensure!(camera.has_control(), "no control-channel privilege right after connect");
+    ensure!(
+        camera.has_control(),
+        "no control-channel privilege right after connect"
+    );
     let version = camera.device().read_register(offset::VERSION)?;
     ensure!(version != 0, "GevVersion register reads 0");
     Ok(Outcome::Passed)
@@ -99,18 +158,27 @@ fn connect_acquires_control(cam: &LiveCam) -> TestResult {
 
 fn connect_by_ip_without_discovery(cam: &LiveCam) -> TestResult {
     let camera = Camera::connect(cam.info.current_ip)?;
-    ensure!(camera.has_control(), "no control-channel privilege right after connect");
+    ensure!(
+        camera.has_control(),
+        "no control-channel privilege right after connect"
+    );
     Ok(Outcome::Passed)
 }
 
 fn second_connection_is_denied_while_controlled(cam: &LiveCam) -> TestResult {
     let first = Camera::new(&cam.info)?;
     let second = Camera::new(&cam.info);
-    ensure!(second.is_err(), "a second client got control while the first still held it exclusively");
+    ensure!(
+        second.is_err(),
+        "a second client got control while the first still held it exclusively"
+    );
     drop(first);
     // Dropping the first `Camera` releases the privilege, so a new client must now get it.
     let third = Camera::new(&cam.info)?;
-    ensure!(third.has_control(), "reconnect after releasing control did not get control");
+    ensure!(
+        third.has_control(),
+        "reconnect after releasing control did not get control"
+    );
     Ok(Outcome::Passed)
 }
 
@@ -119,7 +187,10 @@ fn heartbeat_keeps_control(cam: &LiveCam) -> TestResult {
     let timeout_ms = camera.device().read_register(offset::HEARTBEAT_TIMEOUT)? as u64;
     let wait = Duration::from_millis((timeout_ms * 3 / 2).clamp(2_000, 6_000));
     std::thread::sleep(wait);
-    ensure!(camera.has_control(), "control lost after {wait:?} (heartbeat timeout {timeout_ms} ms)");
+    ensure!(
+        camera.has_control(),
+        "control lost after {wait:?} (heartbeat timeout {timeout_ms} ms)"
+    );
     // A register read still succeeding proves the device agrees we are still connected.
     camera.device().read_register(offset::VERSION)?;
     Ok(Outcome::Passed)
@@ -132,9 +203,19 @@ fn heartbeat_keeps_control(cam: &LiveCam) -> TestResult {
 fn genicam_xml_is_fetched_and_parsed(cam: &LiveCam) -> TestResult {
     let camera = Camera::new(&cam.info)?;
     let xml = camera.genicam_xml();
-    ensure!(xml.contains("RegisterDescription"), "GenICam XML has no RegisterDescription ({} bytes)", xml.len());
-    ensure!(!camera.categories()?.is_empty(), "Root category has no children");
-    ensure!(camera.feature_kind("Width").is_some(), "no Width feature in the GenICam XML");
+    ensure!(
+        xml.contains("RegisterDescription"),
+        "GenICam XML has no RegisterDescription ({} bytes)",
+        xml.len()
+    );
+    ensure!(
+        !camera.categories()?.is_empty(),
+        "Root category has no children"
+    );
+    ensure!(
+        camera.feature_kind("Width").is_some(),
+        "no Width feature in the GenICam XML"
+    );
     Ok(Outcome::Passed)
 }
 
@@ -158,7 +239,9 @@ fn identity_features_match_discovery(cam: &LiveCam) -> TestResult {
         checked += 1;
     }
     if checked == 0 {
-        return Ok(Outcome::Skipped("camera exposes none of the Device*Name/SerialNumber features".into()));
+        return Ok(Outcome::Skipped(
+            "camera exposes none of the Device*Name/SerialNumber features".into(),
+        ));
     }
     Ok(Outcome::Passed)
 }
@@ -168,7 +251,10 @@ fn image_format_features_are_readable(cam: &LiveCam) -> TestResult {
     let width = camera.read::<i64>("Width")?;
     let height = camera.read::<i64>("Height")?;
     let payload_size = camera.read::<i64>("PayloadSize")?;
-    ensure!(width > 0 && height > 0, "non-positive image size {width}x{height}");
+    ensure!(
+        width > 0 && height > 0,
+        "non-positive image size {width}x{height}"
+    );
     ensure!(payload_size > 0, "non-positive PayloadSize {payload_size}");
     if camera.feature_kind("PixelFormat").is_some() {
         let pixel_format = camera.read::<String>("PixelFormat")?;
@@ -185,7 +271,10 @@ fn packet_size_register_round_trip(cam: &LiveCam) -> TestResult {
     let result = (|| -> TestResult {
         device.set_stream_packet_size(target)?;
         let read_back = device.stream_packet_size()?;
-        ensure!(read_back == target, "GevSCPSPacketSize read back {read_back}, wrote {target}");
+        ensure!(
+            read_back == target,
+            "GevSCPSPacketSize read back {read_back}, wrote {target}"
+        );
         Ok(Outcome::Passed)
     })();
     device.set_stream_packet_size(original)?;
@@ -200,7 +289,11 @@ fn float_feature_write_round_trip(cam: &LiveCam) -> TestResult {
     }
     let original = camera.read::<f64>(FEATURE)?;
     // Moving toward a shorter exposure is the direction least likely to leave the valid range.
-    let target = if original > 1_000.0 { original - 500.0 } else { original + 500.0 };
+    let target = if original > 1_000.0 {
+        original - 500.0
+    } else {
+        original + 500.0
+    };
     let result = (|| -> TestResult {
         camera.write(FEATURE, target)?;
         let read_back = camera.read::<f64>(FEATURE)?;
@@ -225,12 +318,18 @@ fn enum_feature_write_round_trip(cam: &LiveCam) -> TestResult {
     let result = (|| -> TestResult {
         camera.write(FEATURE, "Off".to_string())?;
         let read_back = camera.read::<String>(FEATURE)?;
-        ensure!(read_back == "Off", "{FEATURE}: wrote \"Off\", read back {read_back:?}");
+        ensure!(
+            read_back == "Off",
+            "{FEATURE}: wrote \"Off\", read back {read_back:?}"
+        );
         Ok(Outcome::Passed)
     })();
     camera.write(FEATURE, original.clone())?;
     let restored = camera.read::<String>(FEATURE)?;
-    ensure!(restored == original, "{FEATURE} not restored: {restored:?} != {original:?}");
+    ensure!(
+        restored == original,
+        "{FEATURE} not restored: {restored:?} != {original:?}"
+    );
     result
 }
 
@@ -250,15 +349,24 @@ fn check_frames(frames: &[Buffer], payload_size: i64) -> std::result::Result<(),
     let mut previous_id = None;
     for (i, frame) in frames.iter().enumerate() {
         if frame.status != BufferStatus::Success {
-            return Err(format!("frame {i} (id {}) has status {:?}", frame.frame_id, frame.status));
+            return Err(format!(
+                "frame {i} (id {}) has status {:?}",
+                frame.frame_id, frame.status
+            ));
         }
         let len = frame.data().len() as i64;
         if len == 0 || len > payload_size {
-            return Err(format!("frame {i} (id {}) has {len} bytes, PayloadSize is {payload_size}", frame.frame_id));
+            return Err(format!(
+                "frame {i} (id {}) has {len} bytes, PayloadSize is {payload_size}",
+                frame.frame_id
+            ));
         }
         if let Some(prev) = previous_id {
             if frame.frame_id <= prev {
-                return Err(format!("frame {i} id {} does not follow previous id {prev}", frame.frame_id));
+                return Err(format!(
+                    "frame {i} id {} does not follow previous id {prev}",
+                    frame.frame_id
+                ));
             }
         }
         previous_id = Some(frame.frame_id);
@@ -269,7 +377,11 @@ fn check_frames(frames: &[Buffer], payload_size: i64) -> std::result::Result<(),
 /// Start a callback stream on `camera`, collect `n` frames, and stop it again. Also returns the
 /// `PayloadSize` in effect while streaming: it can depend on the packet size the stream programs
 /// (it does on the C6-2040-GigE), so it must be read after the stream has started.
-fn stream_frames(camera: &Camera, cfg: Option<StreamConfig>, n: usize) -> std::result::Result<(Vec<Buffer>, i64), Box<dyn std::error::Error>> {
+fn stream_frames(
+    camera: &Camera,
+    cfg: Option<StreamConfig>,
+    n: usize,
+) -> std::result::Result<(Vec<Buffer>, i64), Box<dyn std::error::Error>> {
     let (tx, rx) = mpsc::channel();
     let callback = move |buffer: Buffer| {
         let _ = tx.send(buffer);
@@ -288,7 +400,11 @@ fn stream_frames(camera: &Camera, cfg: Option<StreamConfig>, n: usize) -> std::r
     }
     camera.stop_stream(stream)?;
     if frames.len() < n {
-        return Err(format!("received only {}/{n} frames ({FRAME_TIMEOUT:?} timeout per frame)", frames.len()).into());
+        return Err(format!(
+            "received only {}/{n} frames ({FRAME_TIMEOUT:?} timeout per frame)",
+            frames.len()
+        )
+        .into());
     }
     Ok((frames, payload_size?))
 }
@@ -318,7 +434,8 @@ fn stream_channel_zero_copy_frames(cam: &LiveCam) -> TestResult {
             pool.push_buffer(buffer);
             checked?;
             if payload_type == PayloadType::Image {
-                let image = image.ok_or_else(|| format!("frame {i}: image payload without image info"))?;
+                let image =
+                    image.ok_or_else(|| format!("frame {i}: image payload without image info"))?;
                 ensure!(
                     image.width as i64 == width && image.height as i64 == height,
                     "frame {i}: leader says {}x{}, features say {width}x{height}",
@@ -349,9 +466,15 @@ fn stream_with_custom_packet_size(cam: &LiveCam) -> TestResult {
 fn auto_packet_size_finds_a_streaming_size(cam: &LiveCam) -> TestResult {
     let camera = connect_for_streaming(cam)?;
     let original = camera.stream_packet_size()?;
-    let bound = |v: Option<aravis_port::genicam::Value>, default: i64| v.map(|v| v.as_i64()).unwrap_or(default) as u16;
+    let bound = |v: Option<aravis_port::genicam::Value>, default: i64| {
+        v.map(|v| v.as_i64()).unwrap_or(default) as u16
+    };
     let (min, max, inc) = match camera.feature_info("GevSCPSPacketSize") {
-        Ok(info) => (bound(info.min, 576), bound(info.max, 9000), bound(info.inc, 4).max(1)),
+        Ok(info) => (
+            bound(info.min, 576),
+            bound(info.max, 9000),
+            bound(info.inc, 4).max(1),
+        ),
         Err(_) => (576, 9000, 4),
     };
     let search = PacketSizeSearch {
@@ -362,11 +485,21 @@ fn auto_packet_size_finds_a_streaming_size(cam: &LiveCam) -> TestResult {
     };
     let result = (|| -> TestResult {
         let outcome = camera.auto_packet_size(&search)?;
-        ensure!(outcome.test_packets, "no test packet got through, not even at {min}");
+        ensure!(
+            outcome.test_packets,
+            "no test packet got through, not even at {min}"
+        );
         let found = outcome.packet_size;
-        ensure!(camera.stream_packet_size()? == found, "the found size {found} is not programmed");
+        ensure!(
+            camera.stream_packet_size()? == found,
+            "the found size {found} is not programmed"
+        );
         if found + inc <= max {
-            ensure!(!camera.test_packet_size(found + inc)?, "{} gets through, but the search stopped at {found}", found + inc);
+            ensure!(
+                !camera.test_packet_size(found + inc)?,
+                "{} gets through, but the search stopped at {found}",
+                found + inc
+            );
         }
         let cfg = StreamConfig {
             packet_size: found,
@@ -374,7 +507,9 @@ fn auto_packet_size_finds_a_streaming_size(cam: &LiveCam) -> TestResult {
         };
         let (frames, payload_size) = stream_frames(&camera, Some(cfg), 5)?;
         check_frames(&frames, payload_size)?;
-        Ok(Outcome::PassedWith(format!("packet size {found} (bounds {min}..={max} step {inc}, was {original})")))
+        Ok(Outcome::PassedWith(format!(
+            "packet size {found} (bounds {min}..={max} step {inc}, was {original})"
+        )))
     })();
     camera.device().set_stream_packet_size(original)?;
     result
@@ -383,7 +518,8 @@ fn auto_packet_size_finds_a_streaming_size(cam: &LiveCam) -> TestResult {
 fn stream_can_restart(cam: &LiveCam) -> TestResult {
     let camera = connect_for_streaming(cam)?;
     for round in 1..=2 {
-        let (frames, payload_size) = stream_frames(&camera, None, 3).map_err(|e| format!("round {round}: {e}"))?;
+        let (frames, payload_size) =
+            stream_frames(&camera, None, 3).map_err(|e| format!("round {round}: {e}"))?;
         check_frames(&frames, payload_size).map_err(|e| format!("round {round}: {e}"))?;
     }
     Ok(Outcome::Passed)
@@ -456,15 +592,23 @@ fn chunk_data_matches_genicam_browser(cam: &LiveCam) -> TestResult {
     let original_chunk_mode = camera.read::<bool>("ChunkModeActive")?;
     let result = (|| -> TestResult {
         camera.write("ChunkModeActive", true)?;
-        ensure!(camera.read::<bool>("ChunkModeActive")?, "ChunkModeActive did not turn on");
+        ensure!(
+            camera.read::<bool>("ChunkModeActive")?,
+            "ChunkModeActive did not turn on"
+        );
 
         for &feature in THREE_D_ONLY_CHUNK_FEATURES {
-            ensure!(!camera.is_available(feature)?, "{feature} is available in Areascan mode");
+            ensure!(
+                !camera.is_available(feature)?,
+                "{feature} is available in Areascan mode"
+            );
         }
         for &feature in SCAN_LINE_CHUNK_FEATURES {
             ensure!(camera.is_available(feature)?, "{feature} is not available");
         }
-        let tick_frequency = camera.read::<i64>("GevTimestampTickFrequency").unwrap_or(1_000_000_000);
+        let tick_frequency = camera
+            .read::<i64>("GevTimestampTickFrequency")
+            .unwrap_or(1_000_000_000);
 
         let (stream, pool) = camera.start_stream_channel()?;
         let payload_size = camera.read::<i64>("PayloadSize");
@@ -490,7 +634,13 @@ fn chunk_data_matches_genicam_browser(cam: &LiveCam) -> TestResult {
                 .iter()
                 .map(|&f| camera.read_chunk::<i64>(frame, f).map(|v| (f, v)))
                 .collect::<Result<Vec<_>>>()?;
-            let value = |name: &str| values.iter().find(|(f, _)| *f == name).map(|&(_, v)| v).unwrap();
+            let value = |name: &str| {
+                values
+                    .iter()
+                    .find(|(f, _)| *f == name)
+                    .map(|&(_, v)| v)
+                    .unwrap()
+            };
 
             // The chunk timestamp is the one the GVSP leader carries.
             ensure!(
@@ -509,7 +659,8 @@ fn chunk_data_matches_genicam_browser(cam: &LiveCam) -> TestResult {
                 value("ChunkTimestamp")
             );
             // The camera's frame counter advances with the stream's block ids.
-            let (first_block, first_counter) = *first.get_or_insert((frame.frame_id, value("ChunkFrameID")));
+            let (first_block, first_counter) =
+                *first.get_or_insert((frame.frame_id, value("ChunkFrameID")));
             ensure!(
                 value("ChunkFrameID") - first_counter == (frame.frame_id - first_block) as i64,
                 "frame {}: ChunkFrameID {} does not advance with the block id (first: block {first_block}, ChunkFrameID {first_counter})",
@@ -532,7 +683,11 @@ fn chunk_data_matches_genicam_browser(cam: &LiveCam) -> TestResult {
                     frame.frame_id
                 );
             }
-            shown = values.iter().map(|(f, v)| format!("{f}={v}")).collect::<Vec<_>>().join(" ");
+            shown = values
+                .iter()
+                .map(|(f, v)| format!("{f}={v}"))
+                .collect::<Vec<_>>()
+                .join(" ");
         }
         Ok(Outcome::PassedWith(format!("last frame: {shown}")))
     })();
@@ -555,7 +710,14 @@ struct Args {
 
 /// libtest flags that cargo or an IDE may pass and that take a separate value; the value must be
 /// consumed so it isn't taken for a name filter.
-const IGNORED_FLAGS_WITH_VALUE: &[&str] = &["--test-threads", "--color", "--format", "--logfile", "--skip", "-Z"];
+const IGNORED_FLAGS_WITH_VALUE: &[&str] = &[
+    "--test-threads",
+    "--color",
+    "--format",
+    "--logfile",
+    "--skip",
+    "-Z",
+];
 
 fn parse_args() -> std::result::Result<Args, String> {
     let mut args = Args::default();
@@ -573,9 +735,19 @@ fn parse_args() -> std::result::Result<Args, String> {
         };
         match flag.as_str() {
             "--serial" => args.serial = Some(value("--serial")?),
-            "--bind" => args.bind = Some(value("--bind")?.parse().map_err(|e| format!("--bind: {e}"))?),
+            "--bind" => {
+                args.bind = Some(
+                    value("--bind")?
+                        .parse()
+                        .map_err(|e| format!("--bind: {e}"))?,
+                )
+            }
             "--broadcast" => {
-                args.broadcast = Some(value("--broadcast")?.parse().map_err(|e| format!("--broadcast: {e}"))?)
+                args.broadcast = Some(
+                    value("--broadcast")?
+                        .parse()
+                        .map_err(|e| format!("--broadcast: {e}"))?,
+                )
             }
             "--list" => args.list = true,
             f if IGNORED_FLAGS_WITH_VALUE.contains(&f) => {
@@ -603,7 +775,9 @@ fn main() -> ExitCode {
     let selected: Vec<(String, TestFn)> = TESTS
         .iter()
         .map(|(name, f)| (format!("{GROUP}::{name}"), *f))
-        .filter(|(name, _)| args.filters.is_empty() || args.filters.iter().any(|f| name.contains(f.as_str())))
+        .filter(|(name, _)| {
+            args.filters.is_empty() || args.filters.iter().any(|f| name.contains(f.as_str()))
+        })
         .collect();
 
     if args.list {
@@ -629,9 +803,15 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    let Some(info) = found.iter().find(|d| d.serial.trim() == serial.trim()).cloned() else {
+    let Some(info) = found
+        .iter()
+        .find(|d| d.serial.trim() == serial.trim())
+        .cloned()
+    else {
         let serials: Vec<&str> = found.iter().map(|d| d.serial.trim()).collect();
-        eprintln!("{GROUP}: no camera with serial {serial:?} found (discovered serials: {serials:?})");
+        eprintln!(
+            "{GROUP}: no camera with serial {serial:?} found (discovered serials: {serials:?})"
+        );
         return ExitCode::FAILURE;
     };
     println!("{GROUP}: using {} at {}", info.id, info.current_ip);

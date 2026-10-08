@@ -40,10 +40,14 @@ fn never_responding_peer_times_out_after_retries() {
 #[test]
 fn pending_ack_extends_deadline_without_consuming_a_retry() {
     let (device_socket, device_addr) = fake_device_socket();
-    let mut txn = GvcpTransaction::connect(device_addr, TransactionConfig {
-        retries: 1,
-        timeout: Duration::from_millis(50),
-    }).unwrap();
+    let mut txn = GvcpTransaction::connect(
+        device_addr,
+        TransactionConfig {
+            retries: 1,
+            timeout: Duration::from_millis(50),
+        },
+    )
+    .unwrap();
 
     let handle = thread::spawn(move || {
         let mut buf = [0u8; 1024];
@@ -99,11 +103,29 @@ fn mismatched_id_and_command_are_ignored_then_real_ack_accepted() {
         let req = GvcpHeader::from_bytes(&buf[..n]).unwrap();
 
         // Wrong id.
-        send_ack(&device_socket, from, Command::ReadRegisterAck, req.id.wrapping_add(1), &ReadRegisterAck { value: 1 }.encode());
+        send_ack(
+            &device_socket,
+            from,
+            Command::ReadRegisterAck,
+            req.id.wrapping_add(1),
+            &ReadRegisterAck { value: 1 }.encode(),
+        );
         // Wrong command (matching id).
-        send_ack(&device_socket, from, Command::WriteRegisterAck, req.id, &[0, 0, 0, 0]);
+        send_ack(
+            &device_socket,
+            from,
+            Command::WriteRegisterAck,
+            req.id,
+            &[0, 0, 0, 0],
+        );
         // Correct ack.
-        send_ack(&device_socket, from, Command::ReadRegisterAck, req.id, &ReadRegisterAck { value: 42 }.encode());
+        send_ack(
+            &device_socket,
+            from,
+            Command::ReadRegisterAck,
+            req.id,
+            &ReadRegisterAck { value: 42 }.encode(),
+        );
     });
 
     let value = txn.read_register(0xa00).unwrap();
@@ -135,7 +157,13 @@ fn error_ack_is_returned_as_gvcp_error() {
     handle.join().unwrap();
 }
 
-fn send_ack(socket: &UdpSocket, to: std::net::SocketAddr, command: Command, id: u16, payload: &[u8]) {
+fn send_ack(
+    socket: &UdpSocket,
+    to: std::net::SocketAddr,
+    command: Command,
+    id: u16,
+    payload: &[u8],
+) {
     let header = GvcpHeader {
         packet_type: PacketType::Ack,
         raw_flags: 0,
