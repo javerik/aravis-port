@@ -26,7 +26,7 @@ aravis-port-device = { path = "aravis-port-device", version = "0.2.0" }
 aravis-port-stream = { path = "aravis-port-stream", version = "0.2.0" }
 aravis-port-fakecamera = { path = "aravis-port-fakecamera", version = "0.2.0" }
 quick-xml = "0.36"
-thiserror = "1.0"
+thiserror = "2.0"
 log = "0.4"
 env_logger = "0.11"
 rand = "0.8"
