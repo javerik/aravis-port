@@ -1,0 +1,73 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  ci:
+    uses: ./.github/workflows/ci.yml
+
+  release:
+    needs: ci
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      TAG: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Check the tag against the workspace version
+        run: |
+          version=$(cargo metadata --no-deps --format-version 1 |
+              jq -r '.packages[] | select(.name == "aravis-port") | .version')
+          if [[ "$TAG" != "v$version" ]]; then
+              echo "::error::tag $TAG does not match the workspace version $version"
+              exit 1
+          fi
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+
+      - name: Extract the release notes from CHANGELOG.md
+        run: |
+          awk -v v="$VERSION" '
+              /^## \[/ { if (found) exit; if (index($0, "## [" v "]") == 1) { found = 1; next } }
+              found { print }
+              END { if (!found) exit 1 }
+          ' CHANGELOG.md > notes.md || {
+              echo "::error::CHANGELOG.md has no '## [$VERSION]' section"
+              exit 1
+          }
+          cat notes.md
+
+      - name: Package the crates
+        run: cargo package --workspace
+
+      - name: Publish to crates.io
+        run: scripts/publish-crates.sh
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+      - name: Create the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          assets=(target/package/*-"$VERSION".crate)
+          if gh release view "$TAG" >/dev/null 2>&1; then
+              gh release upload "$TAG" "${assets[@]}" --clobber
+          else
+              prerelease=()
+              [[ "$TAG" == *-* ]] && prerelease=(--prerelease)
+              gh release create "$TAG" --title "$TAG" --notes-file notes.md --verify-tag \
+                  "${prerelease[@]}" "${assets[@]}"
+          fi
