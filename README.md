@@ -1,6 +1,17 @@
 # aravis-port
 
-A pure-Rust, zero-`unsafe` port of the GigE Vision (GEV) subset of [Aravis](https://github.com/aravis-project/aravis) 0.9.2. See [`ai/rust-port.md`](ai/rust-port.md) for the original specification.
+[![CI](https://github.com/javerik/aravis-port/actions/workflows/ci.yml/badge.svg)](https://github.com/javerik/aravis-port/actions/workflows/ci.yml)
+[![crates.io](https://img.shields.io/crates/v/aravis-port.svg)](https://crates.io/crates/aravis-port)
+[![docs.rs](https://img.shields.io/docsrs/aravis-port)](https://docs.rs/aravis-port)
+
+A pure-Rust, zero-`unsafe` port of the GigE Vision (GEV) subset of [Aravis](https://github.com/aravis-project/aravis) 0.9.2.
+
+```toml
+[dependencies]
+aravis-port = "0.2"
+```
+
+The minimum supported Rust version is 1.82. Changes are listed in [`CHANGELOG.md`](CHANGELOG.md).
 
 ```rust
 use aravis_port::prelude::*;
@@ -21,7 +32,7 @@ camera.stop_stream(stream)?;
 
 ## Status
 
-All six phases of the spec are implemented and validated both against an in-process fake camera and a real AT-Automation Technology C5-2040-GigE camera on the network: discovery, GVCP register/memory read-write, GenICam XML fetch (including zip-compressed XML, via a from-scratch pure-Rust DEFLATE decoder) and node-tree evaluation (including the formula evaluator and masked-register bit layout), GVSP streaming with packet reassembly/resend, and the umbrella `Camera` API.
+All six phases of the spec are implemented and validated both against an in-process fake camera and real AT-Automation Technology C5-2040-GigE and C6-2040-GigE cameras on the network: discovery, GVCP register/memory read-write, GenICam XML fetch (including zip-compressed XML, via a from-scratch pure-Rust DEFLATE decoder) and node-tree evaluation (including the formula evaluator and masked-register bit layout), GVSP streaming with packet reassembly/resend, and the umbrella `Camera` API.
 
 ```
 cargo test --workspace --all-features   # unit + fakecamera integration tests
@@ -43,20 +54,19 @@ No `unsafe` appears anywhere in the workspace (`#![forbid(unsafe_code)]` in ever
 
 `aravis-port-memory` and `aravis-port-net` were folded into `core`/`device` respectively — each existed only because of the original 8-crate spec, not for any load-bearing architectural reason. The umbrella crate still exposes `aravis_port::memory::*` and `aravis_port::net::*` unchanged.
 
-## Publishing
+## Releasing
 
-Every crate has `description`, `license`, `repository`, `readme`, `keywords`, and `categories` set (inherited from `[workspace.package]`), and every internal path dependency in `[workspace.dependencies]` carries a `version` alongside its `path` — required for `cargo publish` to resolve it once the dependency is live on crates.io. Workspace-internal *dev*-dependencies (e.g. `aravis-port-device` and `aravis-port-stream` depend on each other only as test fixtures) are deliberately left path-only with no version, so Cargo drops them from the published manifest instead of deadlocking a would-be publish cycle.
+All crates share the version in `[workspace.package]` and are released together:
 
-Because of the real (non-dev) dependency graph, crates must be published to crates.io in this order:
+1. Bump `version` in `[workspace.package]` and the internal entries in `[workspace.dependencies]`.
+2. Move the `Unreleased` entries in `CHANGELOG.md` under a `## [X.Y.Z] - date` heading.
+3. Commit, push, wait for CI, then tag: `git tag -a vX.Y.Z -m vX.Y.Z && git push origin vX.Y.Z`.
 
-1. `aravis-port-core`
-2. `aravis-port-genicam` (depends only on `core`)
-3. `aravis-port-stream` (depends on `core`)
-4. `aravis-port-fakecamera` (depends on `core`, `genicam`)
-5. `aravis-port-device` (depends on `core`, `genicam`)
-6. `aravis-port` (depends on all of the above)
+The tag runs `.github/workflows/release.yml`. It reruns CI, checks the tag against the workspace version, publishes the crates to crates.io in dependency order through `scripts/publish-crates.sh` (it skips versions already on crates.io, so a failed release can be rerun), and creates a GitHub Release with the changelog section and the packaged `.crate` files. It needs the repository secret `CARGO_REGISTRY_TOKEN`.
 
-For each, after the previous step's crate is confirmed live on crates.io: `cargo publish -p <crate>` (add `--dry-run` to check packaging without uploading — note a dry-run of any crate with an unpublished internal dependency will fail at the packaging step with "no matching package found," since it resolves the full graph against the live registry; this isn't a configuration problem, just the ordering constraint above).
+To check packaging locally, run `cargo publish --workspace --dry-run` (Cargo 1.90 or newer resolves the unpublished internal dependencies through a temporary registry) or `DRY_RUN=1 scripts/publish-crates.sh`.
+
+Workspace-internal *dev*-dependencies (e.g. `aravis-port-device` and `aravis-port-stream` use each other as test fixtures) are deliberately path-only with no `version`, so Cargo drops them from the published manifest instead of creating a publish cycle.
 
 ## Live-hardware checks
 

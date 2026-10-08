@@ -40,8 +40,9 @@ pub struct ImageInfo {
     pub y_offset: u32,
 }
 
-/// A single acquired (or in-progress) frame. Reused across acquisitions: push it back into a
-/// [`crate::memory::pool`] once consumed rather than allocating a new one per frame.
+/// A single acquired (or in-progress) frame. Reused across acquisitions: push it back into its
+/// pool (see [`crate::memory::new_buffer_pool`]) once consumed rather than allocating a new one
+/// per frame.
 #[derive(Debug, Clone)]
 pub struct Buffer {
     pub frame_id: u64,

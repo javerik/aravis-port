@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-A pure-Rust, zero-`unsafe` port of the GigE Vision (GEV) subset of Aravis 0.9.2: discovery, GVCP control, GenICam XML/node-tree evaluation, and GVSP streaming. The original spec is referenced as `ai/rust-port.md` in the README and code comments, but `ai/` is gitignored and may not exist locally.
+A pure-Rust, zero-`unsafe` port of the GigE Vision (GEV) subset of Aravis 0.9.2: discovery, GVCP control, GenICam XML/node-tree evaluation, and GVSP streaming. The original spec is referenced as `ai/rust-port.md` in code comments, but `ai/` is gitignored and may not exist locally.
 
 ## Commands
 
@@ -12,6 +12,8 @@ A pure-Rust, zero-`unsafe` port of the GigE Vision (GEV) subset of Aravis 0.9.2:
 cargo build --workspace
 cargo test --workspace --all-features                  # full suite, runs against the in-process fake camera; no hardware needed
 cargo clippy --workspace --all-targets -- -D warnings  # must be clean
+cargo fmt --all -- --check                             # must be clean (CI checks it)
+RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps  # must be clean too
 cargo test -p aravis-port-genicam                      # one crate
 cargo test -p aravis-port --test integration           # one integration-test file
 cargo test -p aravis-port-stream --test resend_under_loss <test_name>   # a single test
@@ -27,7 +29,7 @@ The live-hardware examples (`live_check*`, `discover`) under `aravis-port-device
 - **`#![forbid(unsafe_code)]` in every crate.** Don't add `unsafe`, even behind a feature flag.
 - **The dependency list is closed.** The only external crates are the ones in `[workspace.dependencies]` (`quick-xml`, `thiserror`, `log`, `bitflags`, `rand`, `crc32fast`, and `env_logger` for dev). This is why the crate has its own DEFLATE/zip decoder (`aravis-port-device/src/zip/`), why discovery needs explicit bind addresses (std can't enumerate NICs), and why `SO_RCVBUF` isn't set (that would need `socket2`). Implement features with `std` rather than adding a crate.
 - **Parsers must return errors on malformed input, not panic.** Every wire/XML/formula/deflate parser has `*_is_an_error_not_a_panic`/`truncated_*` tests. Keep that pattern when adding decoders.
-- **Publishing:** internal *dev*-dependencies between crates stay path-only with no `version` (device and stream use each other as dev-deps, and a version would create a publish cycle). Real dependencies go through `[workspace.dependencies]` with both `path` and `version`. The README gives the required `cargo publish` order.
+- **Publishing:** internal *dev*-dependencies between crates stay path-only with no `version` (device and stream use each other as dev-deps, and a version would create a publish cycle). Real dependencies go through `[workspace.dependencies]` with both `path` and `version`. All crates share one version (`[workspace.package]`, MSRV `rust-version = "1.82"`). A `vX.Y.Z` tag runs `.github/workflows/release.yml`, which publishes in dependency order through `scripts/publish-crates.sh` (a new crate goes into its `CRATES` list) and needs a matching `## [X.Y.Z]` section in `CHANGELOG.md`. `.github/workflows/ci.yml` also runs the docs build, an MSRV check and `cargo check` for aarch64, armv7 and windows-gnu.
 
 ## Architecture
 

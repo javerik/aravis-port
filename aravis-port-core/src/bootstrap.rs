@@ -1,6 +1,6 @@
 //! GVBS (GigE Vision Bootstrap Register) offsets.
 //!
-//! These offsets are the single source of truth used by [`crate::gvcp::messages::DiscoveryAck`]
+//! These offsets are the single source of truth used by [`crate::gvcp::DiscoveryAck`]
 //! parsing, `aravis-port-device`'s stream-channel setup, and `aravis-port-fakecamera`'s register
 //! bank, so the memory map only needs to be gotten right in one place.
 
