@@ -19,6 +19,8 @@ jobs:
   release:
     needs: ci
     runs-on: ubuntu-latest
+    # CARGO_REGISTRY_TOKEN is a secret of this environment, so only jobs that name it get it.
+    environment: Release
     permissions:
       contents: write
     env:

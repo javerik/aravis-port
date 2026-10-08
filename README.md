@@ -62,7 +62,7 @@ All crates share the version in `[workspace.package]` and are released together:
 2. Move the `Unreleased` entries in `CHANGELOG.md` under a `## [X.Y.Z] - date` heading.
 3. Commit, push, wait for CI, then tag: `git tag -a vX.Y.Z -m vX.Y.Z && git push origin vX.Y.Z`.
 
-The tag runs `.github/workflows/release.yml`. It reruns CI, checks the tag against the workspace version, publishes the crates to crates.io in dependency order through `scripts/publish-crates.sh` (it skips versions already on crates.io, so a failed release can be rerun), and creates a GitHub Release with the changelog section and the packaged `.crate` files. It needs the repository secret `CARGO_REGISTRY_TOKEN`.
+The tag runs `.github/workflows/release.yml`. It reruns CI, checks the tag against the workspace version, publishes the crates to crates.io in dependency order through `scripts/publish-crates.sh` (it skips versions already on crates.io, so a failed release can be rerun), and creates a GitHub Release with the changelog section and the packaged `.crate` files. It needs the secret `CARGO_REGISTRY_TOKEN` in the GitHub environment `Release`.
 
 To check packaging locally, run `cargo publish --workspace --dry-run` (Cargo 1.90 or newer resolves the unpublished internal dependencies through a temporary registry) or `DRY_RUN=1 scripts/publish-crates.sh`.
 
