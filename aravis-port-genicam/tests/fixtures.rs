@@ -760,3 +760,76 @@ fn lock_dependencies_are_followed_through_formulas() {
         Err(GenIcamError::NotFound(_))
     ));
 }
+
+#[test]
+fn apply_defaults_seeds_registers_including_read_only_and_enums() {
+    let xml = r#"<RegisterDescription>
+      <IntReg Name="SensorWidthReg">
+        <Address>0x0</Address>
+        <Length>4</Length>
+        <AccessMode>RO</AccessMode>
+        <Endianess>BigEndian</Endianess>
+        <Value>2048</Value>
+      </IntReg>
+      <Integer Name="SensorWidth"><pValue>SensorWidthReg</pValue></Integer>
+      <IntReg Name="GainReg">
+        <Address>0x4</Address>
+        <Length>4</Length>
+        <AccessMode>RW</AccessMode>
+        <Endianess>BigEndian</Endianess>
+      </IntReg>
+      <Integer Name="Gain"><pValue>GainReg</pValue><Value>12</Value></Integer>
+      <IntReg Name="PixelFormatReg">
+        <Address>0x8</Address>
+        <Length>4</Length>
+        <AccessMode>RW</AccessMode>
+        <Endianess>BigEndian</Endianess>
+      </IntReg>
+      <Enumeration Name="PixelFormat">
+        <EnumEntry Name="Mono8"><Value>0x01080001</Value></EnumEntry>
+        <EnumEntry Name="Mono16"><Value>0x01100007</Value></EnumEntry>
+        <pValue>PixelFormatReg</pValue>
+      </Enumeration>
+      <StringReg Name="TagReg">
+        <Address>0x10</Address>
+        <Length>16</Length>
+        <AccessMode>RO</AccessMode>
+        <Value>Cam0</Value>
+      </StringReg>
+      <IntReg Name="AcqReg">
+        <Address>0x20</Address>
+        <Length>4</Length>
+        <AccessMode>WO</AccessMode>
+        <Endianess>BigEndian</Endianess>
+      </IntReg>
+      <Command Name="AcquisitionStart">
+        <pValue>AcqReg</pValue>
+        <CommandValue>1</CommandValue>
+      </Command>
+    </RegisterDescription>"#;
+    let tree = GenApiTree::parse(xml).unwrap();
+    let mut io = MemoryRegisterAccess::new(64);
+    tree.apply_defaults(&mut io);
+
+    assert_eq!(tree.get_integer(&mut io, "SensorWidth").unwrap(), 2048);
+    assert_eq!(tree.get_integer(&mut io, "Gain").unwrap(), 12);
+    assert_eq!(
+        tree.get_enum_symbolic(&mut io, "PixelFormat").unwrap(),
+        "Mono8"
+    );
+    assert_eq!(tree.get_string(&mut io, "TagReg").unwrap(), "Cam0");
+
+    let regs = tree.feature_register_nodes("SensorWidth").unwrap();
+    assert_eq!(regs.len(), 1);
+    assert_eq!(
+        tree.register_range(&mut io, regs[0]).unwrap(),
+        Some((0, 4, false))
+    );
+
+    let (cmd_target, cmd_val) = tree.command_spec("AcquisitionStart").unwrap();
+    assert_eq!(cmd_val, 1);
+    assert_eq!(
+        tree.register_range(&mut io, cmd_target).unwrap(),
+        Some((0x20, 4, false))
+    );
+}

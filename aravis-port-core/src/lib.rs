@@ -16,6 +16,7 @@ pub mod gvcp;
 pub mod gvsp;
 pub mod mac;
 pub mod memory;
+pub mod zip;
 
 pub use error::{Error, Result};
 pub use mac::MacAddress;

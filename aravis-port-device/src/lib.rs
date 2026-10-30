@@ -7,7 +7,6 @@ mod heartbeat;
 mod io;
 pub mod net;
 mod xml_fetch;
-mod zip;
 
 pub use device::{Device, DeviceConfig, PacketResendSender};
 pub use feature::FeatureValue;

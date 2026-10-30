@@ -12,6 +12,7 @@ mod loss;
 mod pattern;
 mod registers;
 mod source;
+mod vendor_xml;
 mod xml;
 
 use std::collections::VecDeque;
@@ -27,10 +28,15 @@ use gvcp_server::SharedState;
 use gvsp_server::GvspSettings;
 use registers::{Identity, RegisterBank};
 use source::SharedSource;
+use vendor_xml::{VendorDefaults, VendorModel};
 
 pub use gvsp_server::{CHUNK_ID_FRAME_ID, CHUNK_ID_IMAGE, CHUNK_MODE_EXTRA_BYTES};
 pub use registers::{feature, pixel_format, scan_type, REGISTER_SPACE_SIZE};
 pub use source::{FrameRequest, FrameSource, PatternSource};
+pub use vendor_xml::{
+    bytes_per_pixel_for, validate_vendor_xml, ResolvedFeatures, VendorXml,
+    DEFAULT_VENDOR_XML_ADDRESS,
+};
 
 /// Configuration for a simulated camera.
 #[derive(Debug, Clone)]
@@ -81,6 +87,11 @@ pub struct FakeCameraConfig {
     /// Independent per-packet drop probability (0.0-1.0), applied to each leader/payload/trailer
     /// packet, to drive packet-resend tests.
     pub gvsp_loss_probability: f64,
+    /// Optional vendor GenICam XML (`.xml` or `.zip`) served instead of the built-in XML. When
+    /// `Some`, the emulator resolves SFNC features (`Width`, `Height`, `PixelFormat`,
+    /// `AcquisitionStart`, ...) through [`aravis_port_genicam::GenApiTree`] over its sparse
+    /// 32-bit register space.
+    pub genicam_xml: Option<VendorXml>,
 }
 
 impl Default for FakeCameraConfig {
@@ -105,6 +116,7 @@ impl Default for FakeCameraConfig {
             test_packets: true,
             resend_unavailable: false,
             gvsp_loss_probability: 0.0,
+            genicam_xml: None,
         }
     }
 }
@@ -127,6 +139,10 @@ pub struct FakeCamera {
 impl FakeCamera {
     /// Bind GVCP at [`FakeCameraConfig::gvcp_bind`] and start the camera.
     pub fn start(cfg: FakeCameraConfig) -> std::io::Result<Self> {
+        // Validate any vendor XML before binding sockets so invalid XML fails cleanly.
+        if let Some(ref vendor) = cfg.genicam_xml {
+            let _ = validate_vendor_xml(vendor)?;
+        }
         let socket = UdpSocket::bind(cfg.gvcp_bind)?;
         Self::start_on(cfg, socket)
     }
@@ -154,21 +170,59 @@ impl FakeCamera {
             mac: cfg.mac,
             current_ip: *local_addr.ip(),
         };
-        let mut bank = RegisterBank::new(
-            &identity,
-            xml::minimal_genicam_xml(cfg.sensor_width, cfg.sensor_height),
-        );
-        bank.write_u32(
-            aravis_port_core::bootstrap::offset::HEARTBEAT_TIMEOUT,
-            cfg.heartbeat_timeout.as_millis() as u32,
-        );
-        bank.write_u32(
-            aravis_port_core::bootstrap::offset::STREAM_CHANNEL_0_PACKET_SIZE,
-            u32::from(cfg.packet_size),
-        );
+        let (mut bank, vendor) = if let Some(ref vendor_xml) = cfg.genicam_xml {
+            let mut bank = RegisterBank::new_vendor(
+                &identity,
+                vendor_xml.bytes.clone(),
+                vendor_xml.address,
+                &vendor_xml.file_name,
+            );
+            bank.write_u32(
+                aravis_port_core::bootstrap::offset::HEARTBEAT_TIMEOUT,
+                cfg.heartbeat_timeout.as_millis() as u32,
+            );
+            bank.write_u32(
+                aravis_port_core::bootstrap::offset::STREAM_CHANNEL_0_PACKET_SIZE,
+                u32::from(cfg.packet_size),
+            );
+            let model = VendorModel::new(
+                vendor_xml,
+                &mut bank,
+                VendorDefaults {
+                    sensor_width: cfg.sensor_width,
+                    sensor_height: cfg.sensor_height,
+                },
+            )?;
+            (bank, Some(model))
+        } else {
+            let mut bank = RegisterBank::new(
+                &identity,
+                xml::minimal_genicam_xml(cfg.sensor_width, cfg.sensor_height),
+            );
+            bank.write_u32(
+                aravis_port_core::bootstrap::offset::HEARTBEAT_TIMEOUT,
+                cfg.heartbeat_timeout.as_millis() as u32,
+            );
+            bank.write_u32(
+                aravis_port_core::bootstrap::offset::STREAM_CHANNEL_0_PACKET_SIZE,
+                u32::from(cfg.packet_size),
+            );
+            (bank, None)
+        };
+
+        // Ensure configured packet_size wins if the XML didn't override it.
+        if cfg.packet_size != 1500 {
+            bank.write_u32(
+                aravis_port_core::bootstrap::offset::STREAM_CHANNEL_0_PACKET_SIZE,
+                u32::from(cfg.packet_size),
+            );
+        }
 
         let shared = Arc::new(Mutex::new(SharedState {
             bank,
+            vendor,
+            sensor_width: cfg.sensor_width,
+            sensor_height: cfg.sensor_height,
             controller: None,
             heartbeat_deadline: Instant::now(),
             packet_size: cfg.packet_size,
@@ -230,7 +284,104 @@ impl FakeCamera {
 
     /// Write a register directly (bypassing GVCP and access control), for test setup.
     pub fn poke_register(&self, address: u32, value: u32) {
-        self.shared.lock().unwrap().bank.write_u32(address, value);
+        let mut state = self.shared.lock().unwrap();
+        state.bank.write_u32(address, value);
+        gvcp_server::after_write(&mut state, address, 4);
+    }
+
+    /// Snapshot the camera's currently resolved SFNC features (works in both built-in and
+    /// vendor-XML modes).
+    pub fn resolved_features(&self) -> ResolvedFeatures {
+        let state = self.shared.lock().unwrap();
+        if let Some(ref vendor) = state.vendor {
+            vendor.resolved().clone()
+        } else {
+            ResolvedFeatures::from_builtin_bank(
+                &state.bank,
+                state.sensor_width,
+                state.sensor_height,
+            )
+        }
+    }
+
+    /// Program the ROI (`OffsetX`, `OffsetY`, `Width`, `Height`) in either built-in or
+    /// vendor-XML mode.
+    pub fn set_region(&self, offset_x: u32, offset_y: u32, width: u32, height: u32) {
+        let mut state = self.shared.lock().unwrap();
+        let state = &mut *state;
+        if let Some(ref mut vendor) = state.vendor {
+            vendor.set_region(&mut state.bank, offset_x, offset_y, width, height);
+        } else {
+            state.bank.write_u32(feature::OFFSET_X, offset_x);
+            state.bank.write_u32(feature::OFFSET_Y, offset_y);
+            state.bank.write_u32(feature::WIDTH, width);
+            state.bank.write_u32(feature::HEIGHT, height);
+        }
+    }
+
+    /// Program `PixelFormat` by symbolic entry name (e.g. `"Mono8"`, `"Mono16"`, `"Coord3D_C16"`)
+    /// in either built-in or vendor-XML mode.
+    pub fn set_pixel_format_symbolic(&self, name: &str) -> Result<(), String> {
+        let mut state = self.shared.lock().unwrap();
+        let state = &mut *state;
+        if let Some(ref mut vendor) = state.vendor {
+            vendor.set_pixel_format_symbolic(&mut state.bank, name)
+        } else {
+            let pf = match name {
+                "Mono8" => pixel_format::MONO8,
+                "Mono10" => pixel_format::MONO10,
+                "Mono16" => pixel_format::MONO16,
+                "Coord3D_C16" => pixel_format::COORD3D_C16,
+                other => return Err(format!("unknown built-in PixelFormat '{other}'")),
+            };
+            state.bank.write_u32(feature::PIXEL_FORMAT, pf);
+            Ok(())
+        }
+    }
+
+    /// Program `DeviceScanType` by symbolic entry name (`"Areascan"` or `"Linescan3D"`) in either
+    /// built-in or vendor-XML mode.
+    pub fn set_device_scan_type_symbolic(&self, name: &str) -> Result<(), String> {
+        let mut state = self.shared.lock().unwrap();
+        let state = &mut *state;
+        if let Some(ref mut vendor) = state.vendor {
+            vendor.set_device_scan_type_symbolic(&mut state.bank, name)
+        } else {
+            let scan = if name.eq_ignore_ascii_case("Linescan3D") {
+                scan_type::LINESCAN3D
+            } else {
+                scan_type::AREASCAN
+            };
+            state.bank.write_u32(feature::DEVICE_SCAN_TYPE, scan);
+            gvcp_server::after_write(state, feature::DEVICE_SCAN_TYPE, 4);
+            Ok(())
+        }
+    }
+
+    /// Program `AcquisitionFrameRateEnable` and `AcquisitionFrameRate` in either built-in or
+    /// vendor-XML mode.
+    pub fn set_frame_rate(&self, enabled: bool, hz: f32) {
+        let mut state = self.shared.lock().unwrap();
+        let state = &mut *state;
+        if let Some(ref mut vendor) = state.vendor {
+            vendor.set_frame_rate(&mut state.bank, enabled, hz);
+        } else {
+            state
+                .bank
+                .write_u32(feature::FRAME_RATE_ENABLE, u32::from(enabled));
+            state.bank.write_u32(feature::FRAME_RATE, hz.to_bits());
+        }
+    }
+
+    /// Stop acquisition in either built-in or vendor-XML mode.
+    pub fn stop_acquisition(&self) {
+        let mut state = self.shared.lock().unwrap();
+        let state = &mut *state;
+        if let Some(ref mut vendor) = state.vendor {
+            vendor.stop_acquisition(&mut state.bank);
+        } else {
+            state.bank.write_u32(feature::ACQUISITION_ACTIVE, 0);
+        }
     }
 
     /// The address of the client currently holding control-channel privilege, if any.

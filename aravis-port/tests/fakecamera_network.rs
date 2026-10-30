@@ -15,7 +15,7 @@ use aravis_port::core::gvsp::{ContentType, GvspHeader};
 use aravis_port::memory::BufferStatus;
 use aravis_port::prelude::*;
 use aravis_port_fakecamera::{
-    feature, pixel_format, FakeCamera, FakeCameraConfig, FrameRequest, PatternSource,
+    feature, pixel_format, FakeCamera, FakeCameraConfig, FrameRequest, PatternSource, VendorXml,
 };
 
 /// A second loopback address, so "the camera's IP" differs from the test's own `127.0.0.1`.
@@ -409,4 +409,328 @@ fn sensor_size_sets_width_max_and_height_max() {
     let cam = Camera::connect_addr(camera.local_addr()).unwrap();
     assert_eq!(cam.read::<i64>("WidthMax").unwrap(), 1280);
     assert_eq!(cam.read::<i64>("HeightMax").unwrap(), 960);
+}
+
+const VENDOR_GENICAM_XML: &str = r#"<?xml version="1.0" encoding="utf-8"?>
+<RegisterDescription
+  ModelName="VendorSim-2000"
+  VendorName="VendorCorp"
+  SchemaMajorVersion="1"
+  SchemaMinorVersion="1"
+  SchemaSubMinorVersion="0">
+
+  <Category Name="Root">
+    <pFeature>ImageFormatControl</pFeature>
+    <pFeature>AcquisitionControl</pFeature>
+    <pFeature>VendorSection</pFeature>
+  </Category>
+
+  <Category Name="ImageFormatControl">
+    <pFeature>SensorWidth</pFeature>
+    <pFeature>SensorHeight</pFeature>
+    <pFeature>WidthMax</pFeature>
+    <pFeature>HeightMax</pFeature>
+    <pFeature>Width</pFeature>
+    <pFeature>Height</pFeature>
+    <pFeature>OffsetX</pFeature>
+    <pFeature>OffsetY</pFeature>
+    <pFeature>PixelFormat</pFeature>
+    <pFeature>PayloadSize</pFeature>
+  </Category>
+
+  <Category Name="AcquisitionControl">
+    <pFeature>AcquisitionStart</pFeature>
+    <pFeature>AcquisitionStop</pFeature>
+    <pFeature>AcquisitionFrameRateEnable</pFeature>
+    <pFeature>AcquisitionFrameRate</pFeature>
+    <pFeature>TLParamsLocked</pFeature>
+  </Category>
+
+  <Category Name="VendorSection">
+    <pFeature>VendorCalibGain</pFeature>
+    <pFeature>VendorScratch</pFeature>
+  </Category>
+
+  <IntReg Name="SensorWidthReg">
+    <Address>0x10000000</Address>
+    <Length>4</Length>
+    <AccessMode>RO</AccessMode>
+    <Endianess>BigEndian</Endianess>
+    <Value>1024</Value>
+  </IntReg>
+  <Integer Name="SensorWidth"><pValue>SensorWidthReg</pValue></Integer>
+
+  <IntReg Name="SensorHeightReg">
+    <Address>0x10000004</Address>
+    <Length>4</Length>
+    <AccessMode>RO</AccessMode>
+    <Endianess>BigEndian</Endianess>
+    <Value>768</Value>
+  </IntReg>
+  <Integer Name="SensorHeight"><pValue>SensorHeightReg</pValue></Integer>
+
+  <Integer Name="WidthMax"><pValue>SensorWidthReg</pValue></Integer>
+  <Integer Name="HeightMax"><pValue>SensorHeightReg</pValue></Integer>
+
+  <IntReg Name="WidthReg">
+    <Address>0x10000010</Address>
+    <Length>4</Length>
+    <AccessMode>RW</AccessMode>
+    <Endianess>BigEndian</Endianess>
+    <Cachable>WriteThrough</Cachable>
+    <Value>32</Value>
+  </IntReg>
+  <Integer Name="Width">
+    <pValue>WidthReg</pValue>
+    <Min>8</Min>
+    <pMax>WidthMax</pMax>
+    <Inc>4</Inc>
+  </Integer>
+
+  <IntReg Name="HeightReg">
+    <Address>0x10000014</Address>
+    <Length>4</Length>
+    <AccessMode>RW</AccessMode>
+    <Endianess>BigEndian</Endianess>
+    <Cachable>WriteThrough</Cachable>
+    <Value>16</Value>
+  </IntReg>
+  <Integer Name="Height">
+    <pValue>HeightReg</pValue>
+    <Min>4</Min>
+    <pMax>HeightMax</pMax>
+    <Inc>4</Inc>
+  </Integer>
+
+  <IntReg Name="OffsetXReg">
+    <Address>0x10000018</Address>
+    <Length>4</Length>
+    <AccessMode>RW</AccessMode>
+    <Endianess>BigEndian</Endianess>
+    <Value>0</Value>
+  </IntReg>
+  <Integer Name="OffsetX"><pValue>OffsetXReg</pValue><Min>0</Min></Integer>
+
+  <IntReg Name="OffsetYReg">
+    <Address>0x1000001c</Address>
+    <Length>4</Length>
+    <AccessMode>RW</AccessMode>
+    <Endianess>BigEndian</Endianess>
+    <Value>0</Value>
+  </IntReg>
+  <Integer Name="OffsetY"><pValue>OffsetYReg</pValue><Min>0</Min></Integer>
+
+  <IntReg Name="PixelFormatReg">
+    <Address>0x10000020</Address>
+    <Length>4</Length>
+    <AccessMode>RW</AccessMode>
+    <Endianess>BigEndian</Endianess>
+    <Cachable>WriteThrough</Cachable>
+    <Value>0x01080001</Value>
+  </IntReg>
+  <Enumeration Name="PixelFormat">
+    <EnumEntry Name="Mono8"><Value>0x01080001</Value></EnumEntry>
+    <EnumEntry Name="Mono12"><Value>0x01100005</Value></EnumEntry>
+    <EnumEntry Name="Mono16"><Value>0x01100007</Value></EnumEntry>
+    <pValue>PixelFormatReg</pValue>
+  </Enumeration>
+
+  <IntSwissKnife Name="PayloadSizeCalc">
+    <pVariable Name="W">WidthReg</pVariable>
+    <pVariable Name="H">HeightReg</pVariable>
+    <pVariable Name="PF">PixelFormatReg</pVariable>
+    <Formula>W * H * (((PF &gt;&gt; 16) &amp; 0xFF) / 8)</Formula>
+  </IntSwissKnife>
+  <Integer Name="PayloadSize"><pValue>PayloadSizeCalc</pValue></Integer>
+
+  <IntReg Name="AcqStartReg">
+    <Address>0x20000000</Address>
+    <Length>4</Length>
+    <AccessMode>WO</AccessMode>
+    <Endianess>BigEndian</Endianess>
+  </IntReg>
+  <Command Name="AcquisitionStart">
+    <pValue>AcqStartReg</pValue>
+    <CommandValue>1</CommandValue>
+  </Command>
+
+  <IntReg Name="AcqStopReg">
+    <Address>0x20000004</Address>
+    <Length>4</Length>
+    <AccessMode>WO</AccessMode>
+    <Endianess>BigEndian</Endianess>
+  </IntReg>
+  <Command Name="AcquisitionStop">
+    <pValue>AcqStopReg</pValue>
+    <CommandValue>1</CommandValue>
+  </Command>
+
+  <IntReg Name="FrameRateEnableReg">
+    <Address>0x20000010</Address>
+    <Length>4</Length>
+    <AccessMode>RW</AccessMode>
+    <Endianess>BigEndian</Endianess>
+    <Value>1</Value>
+  </IntReg>
+  <Boolean Name="AcquisitionFrameRateEnable"><pValue>FrameRateEnableReg</pValue></Boolean>
+
+  <FloatReg Name="FrameRateReg">
+    <Address>0x20000014</Address>
+    <Length>4</Length>
+    <AccessMode>RW</AccessMode>
+    <Endianess>BigEndian</Endianess>
+    <Value>40.0</Value>
+  </FloatReg>
+  <Float Name="AcquisitionFrameRate"><pValue>FrameRateReg</pValue></Float>
+
+  <IntReg Name="TLParamsLockedReg">
+    <Address>0x20000020</Address>
+    <Length>4</Length>
+    <AccessMode>RO</AccessMode>
+    <Endianess>BigEndian</Endianess>
+    <Value>0</Value>
+  </IntReg>
+  <Integer Name="TLParamsLocked"><pValue>TLParamsLockedReg</pValue></Integer>
+
+  <IntReg Name="VendorCalibGainReg">
+    <Address>0x80000100</Address>
+    <Length>4</Length>
+    <AccessMode>RW</AccessMode>
+    <Endianess>BigEndian</Endianess>
+  </IntReg>
+  <Integer Name="VendorCalibGain">
+    <pValue>VendorCalibGainReg</pValue>
+    <Value>420</Value>
+  </Integer>
+
+  <IntReg Name="VendorScratchReg">
+    <Address>0xffff0000</Address>
+    <Length>4</Length>
+    <AccessMode>RW</AccessMode>
+    <Endianess>BigEndian</Endianess>
+    <Value>0x12345678</Value>
+  </IntReg>
+  <Integer Name="VendorScratch"><pValue>VendorScratchReg</pValue></Integer>
+</RegisterDescription>"#;
+
+#[test]
+fn vendor_xml_high_addresses_swissknife_payload_pfnc_and_streaming() {
+    let camera = FakeCamera::start(FakeCameraConfig {
+        frame_period: Duration::from_millis(10),
+        genicam_xml: Some(VendorXml::new(VENDOR_GENICAM_XML.as_bytes())),
+        ..Default::default()
+    })
+    .unwrap();
+
+    let cam = Camera::connect_addr(camera.local_addr()).unwrap();
+    assert_eq!(cam.read::<i64>("SensorWidth").unwrap(), 1024);
+    assert_eq!(cam.read::<i64>("SensorHeight").unwrap(), 768);
+    assert_eq!(cam.read::<i64>("Width").unwrap(), 32);
+    assert_eq!(cam.read::<i64>("Height").unwrap(), 16);
+    assert_eq!(cam.read::<String>("PixelFormat").unwrap(), "Mono8");
+    assert_eq!(cam.read::<i64>("PayloadSize").unwrap(), 32 * 16);
+
+    // Uninterpreted vendor registers at high 32-bit addresses keep their `<Value>` defaults and
+    // round-trip arbitrary writes as plain memory.
+    assert_eq!(cam.read::<i64>("VendorCalibGain").unwrap(), 420);
+    assert_eq!(cam.read::<i64>("VendorScratch").unwrap(), 0x1234_5678);
+    cam.write("VendorCalibGain", 999i64).unwrap();
+    cam.write("VendorScratch", 0x55aa_1122i64).unwrap();
+    assert_eq!(cam.read::<i64>("VendorCalibGain").unwrap(), 999);
+    assert_eq!(cam.read::<i64>("VendorScratch").unwrap(), 0x55aa_1122);
+
+    // Stream in initial Mono8 (32x16 = 512 bytes).
+    let (tx, rx) = mpsc::channel();
+    let stream = cam
+        .start_stream(move |buffer: Buffer| {
+            let _ = tx.send(buffer);
+        })
+        .unwrap();
+    let buf = rx
+        .recv_timeout(Duration::from_secs(3))
+        .expect("Mono8 frame");
+    cam.stop_stream(stream).unwrap();
+    assert_eq!(buf.status, BufferStatus::Success);
+    assert_eq!(buf.data().len(), 32 * 16);
+    assert_eq!(
+        buf.data().len() as i64,
+        cam.read::<i64>("PayloadSize").unwrap()
+    );
+
+    // Change Width and PixelFormat (PFNC Mono16 = 2 bytes/pixel) and stream again.
+    cam.write("Width", 48i64).unwrap();
+    cam.write("PixelFormat", "Mono16".to_string()).unwrap();
+    assert_eq!(cam.read::<i64>("Width").unwrap(), 48);
+    assert_eq!(cam.read::<String>("PixelFormat").unwrap(), "Mono16");
+    assert_eq!(cam.read::<i64>("PayloadSize").unwrap(), 48 * 16 * 2);
+
+    let (tx, rx) = mpsc::channel();
+    let stream = cam
+        .start_stream(move |buffer: Buffer| {
+            let _ = tx.send(buffer);
+        })
+        .unwrap();
+    let buf = rx
+        .recv_timeout(Duration::from_secs(3))
+        .expect("Mono16 frame");
+    cam.stop_stream(stream).unwrap();
+    assert_eq!(buf.status, BufferStatus::Success);
+    assert_eq!(buf.data().len(), 48 * 16 * 2);
+    assert!(buf
+        .data()
+        .chunks_exact(2)
+        .any(|c| u16::from_le_bytes([c[0], c[1]]) > 255));
+}
+
+#[test]
+fn zipped_vendor_xml_at_custom_address_is_served_and_parsed() {
+    let zip_bytes =
+        aravis_port::core::zip::deflate_single_file("vendor.xml", VENDOR_GENICAM_XML.as_bytes());
+    let camera = FakeCamera::start(FakeCameraConfig {
+        frame_period: Duration::from_millis(10),
+        genicam_xml: Some(
+            VendorXml::new(zip_bytes)
+                .with_file_name("vendor.xml.zip")
+                .with_address(0x0240_0000),
+        ),
+        ..Default::default()
+    })
+    .unwrap();
+
+    let cam = Camera::connect_addr(camera.local_addr()).unwrap();
+    assert_eq!(cam.read::<i64>("Width").unwrap(), 32);
+    assert_eq!(cam.read::<String>("PixelFormat").unwrap(), "Mono8");
+
+    let (tx, rx) = mpsc::channel();
+    let stream = cam
+        .start_stream(move |buffer: Buffer| {
+            let _ = tx.send(buffer);
+        })
+        .unwrap();
+    let buf = rx
+        .recv_timeout(Duration::from_secs(3))
+        .expect("frame from zipped vendor XML");
+    cam.stop_stream(stream).unwrap();
+    assert_eq!(buf.status, BufferStatus::Success);
+    assert_eq!(buf.data().len(), 32 * 16);
+}
+
+#[test]
+fn vendor_xml_missing_required_features_is_rejected_at_start() {
+    let missing_width = r#"<RegisterDescription>
+      <Integer Name="Height"><Value>16</Value></Integer>
+      <Enumeration Name="PixelFormat">
+        <EnumEntry Name="Mono8"><Value>1</Value></EnumEntry>
+        <Value>1</Value>
+      </Enumeration>
+      <IntReg Name="AcqReg"><Address>0x1000</Address><Length>4</Length></IntReg>
+      <Command Name="AcquisitionStart"><pValue>AcqReg</pValue><CommandValue>1</CommandValue></Command>
+    </RegisterDescription>"#;
+    let err = FakeCamera::start(FakeCameraConfig {
+        genicam_xml: Some(VendorXml::new(missing_width.as_bytes())),
+        ..Default::default()
+    })
+    .err()
+    .expect("missing Width must fail");
+    assert!(err.to_string().contains("Width"), "unexpected error: {err}");
 }

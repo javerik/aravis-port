@@ -19,6 +19,55 @@ const DATA_DESCRIPTOR_FLAG: u16 = 0x08;
 const METHOD_STORE: u16 = 0;
 const METHOD_DEFLATE: u16 = 8;
 
+/// Whether `data` starts with a ZIP local-file-header (`PK\x03\x04`).
+pub fn is_zip(data: &[u8]) -> bool {
+    data.starts_with(&LOCAL_FILE_HEADER_SIGNATURE)
+}
+
+/// Pack a single file into a Minimal ZIP archive using `METHOD_STORE` (0).
+pub fn store_single_file(name: &str, content: &[u8]) -> Vec<u8> {
+    zip_entry(name.as_bytes(), METHOD_STORE, content, content.len())
+}
+
+/// Pack a single file into a Minimal ZIP archive using `METHOD_DEFLATE` (8) with uncompressed
+/// RFC 1951 blocks.
+pub fn deflate_single_file(name: &str, content: &[u8]) -> Vec<u8> {
+    let mut deflated = Vec::new();
+    let chunks: Vec<&[u8]> = if content.is_empty() {
+        vec![&[]]
+    } else {
+        content.chunks(0xffff).collect()
+    };
+    for (i, chunk) in chunks.iter().enumerate() {
+        let is_final = u8::from(i + 1 == chunks.len());
+        let len = chunk.len() as u16;
+        let nlen = !len;
+        deflated.push(is_final);
+        deflated.extend_from_slice(&len.to_le_bytes());
+        deflated.extend_from_slice(&nlen.to_le_bytes());
+        deflated.extend_from_slice(chunk);
+    }
+    zip_entry(name.as_bytes(), METHOD_DEFLATE, &deflated, content.len())
+}
+
+fn zip_entry(name: &[u8], method: u16, payload: &[u8], uncompressed_len: usize) -> Vec<u8> {
+    let mut zip = Vec::with_capacity(30 + name.len() + payload.len());
+    zip.extend_from_slice(&LOCAL_FILE_HEADER_SIGNATURE);
+    zip.extend_from_slice(&20u16.to_le_bytes()); // version needed
+    zip.extend_from_slice(&0u16.to_le_bytes()); // flags
+    zip.extend_from_slice(&method.to_le_bytes());
+    zip.extend_from_slice(&0u16.to_le_bytes()); // mod time
+    zip.extend_from_slice(&0u16.to_le_bytes()); // mod date
+    zip.extend_from_slice(&0u32.to_le_bytes()); // crc32 (unchecked by our reader)
+    zip.extend_from_slice(&(payload.len() as u32).to_le_bytes()); // compressed size
+    zip.extend_from_slice(&(uncompressed_len as u32).to_le_bytes()); // uncompressed size
+    zip.extend_from_slice(&(name.len() as u16).to_le_bytes());
+    zip.extend_from_slice(&0u16.to_le_bytes()); // extra len
+    zip.extend_from_slice(name);
+    zip.extend_from_slice(payload);
+    zip
+}
+
 /// Extract the first file entry from a ZIP archive's bytes. GenICam XML archives (confirmed
 /// against the live AT-Automation Technology C5-2040-GigE camera) contain exactly one file, so
 /// this doesn't parse the central directory — it reads the first local file header directly,

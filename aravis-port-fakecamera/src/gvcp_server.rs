@@ -13,6 +13,7 @@ use aravis_port_core::gvcp::{
 
 use crate::gvsp_server::SentFrame;
 use crate::registers::{default_pixel_format, feature, pixel_format_allowed, RegisterBank};
+use crate::vendor_xml::VendorModel;
 
 /// GVCP error code returned for writes from a non-controller client. Our own choice — not
 /// necessarily the official GEV error code, since this is a simulator, not a spec-compliance
@@ -24,6 +25,9 @@ const ERROR_INVALID_PARAMETER: u8 = 0x02;
 
 pub(crate) struct SharedState {
     pub bank: RegisterBank,
+    pub vendor: Option<VendorModel>,
+    pub sensor_width: u32,
+    pub sensor_height: u32,
     pub controller: Option<SocketAddr>,
     pub heartbeat_deadline: Instant,
     pub packet_size: u16,
@@ -177,7 +181,7 @@ fn handle_packet(
                 send_error(socket, from, &header, ERROR_WRITE_ACCESS_DENIED);
                 return;
             }
-            if refuses_write(&state.bank, cmd.address, &cmd.value.to_be_bytes()) {
+            if state_refuses_write(&mut state, cmd.address, &cmd.value.to_be_bytes()) {
                 send_error(socket, from, &header, ERROR_INVALID_PARAMETER);
                 return;
             }
@@ -226,7 +230,7 @@ fn handle_packet(
                 send_error(socket, from, &header, ERROR_WRITE_ACCESS_DENIED);
                 return;
             }
-            if refuses_write(&state.bank, cmd.address, &cmd.data) {
+            if state_refuses_write(&mut state, cmd.address, &cmd.data) {
                 send_error(socket, from, &header, ERROR_INVALID_PARAMETER);
                 return;
             }
@@ -251,6 +255,14 @@ fn handle_packet(
             handle_resend(&state, body, extended);
         }
         _ => {}
+    }
+}
+
+fn state_refuses_write(state: &mut SharedState, address: u32, data: &[u8]) -> bool {
+    if let Some(ref mut vendor) = state.vendor {
+        vendor.refuses_write(&mut state.bank, address, data)
+    } else {
+        refuses_write(&state.bank, address, data)
     }
 }
 
@@ -279,9 +291,11 @@ fn covers(address: u32, len: usize, register: u32) -> bool {
     (address..address.saturating_add(len as u32)).contains(&register)
 }
 
-fn after_write(state: &mut SharedState, address: u32, len: usize) {
-    // A new scan mode brings its own pixel formats; the device moves onto one by itself.
-    if covers(address, len, feature::DEVICE_SCAN_TYPE) {
+pub(crate) fn after_write(state: &mut SharedState, address: u32, len: usize) {
+    if let Some(ref mut vendor) = state.vendor {
+        vendor.after_write(&mut state.bank, address, len);
+    } else if covers(address, len, feature::DEVICE_SCAN_TYPE) {
+        // A new scan mode brings its own pixel formats; the device moves onto one by itself.
         let scan = state.bank.read_u32(feature::DEVICE_SCAN_TYPE);
         if !pixel_format_allowed(scan, state.bank.read_u32(feature::PIXEL_FORMAT)) {
             state

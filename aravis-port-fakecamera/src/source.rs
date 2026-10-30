@@ -49,11 +49,12 @@ pub struct PatternSource;
 
 impl FrameSource for PatternSource {
     fn next_frame(&mut self, request: &FrameRequest<'_>) -> Option<Vec<u8>> {
-        Some(pattern::generate(
+        Some(pattern::generate_for_format(
             request.width,
             request.height,
             request.frame_id,
             request.pixel_format,
+            request.pixel_format_name,
         ))
     }
 }

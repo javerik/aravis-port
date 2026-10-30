@@ -5,4 +5,5 @@
 mod archive;
 mod deflate;
 
-pub use archive::extract_first_file;
+pub use archive::{deflate_single_file, extract_first_file, is_zip, store_single_file, ZipError};
+pub use deflate::InflateError;

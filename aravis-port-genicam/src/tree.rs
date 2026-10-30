@@ -93,6 +93,17 @@ pub struct FeatureInfo {
     pub entries: Option<Vec<EnumEntryState>>,
 }
 
+/// Power-on default extracted from a `<Value>` element (or an `<Enumeration>`'s first entry)
+/// so [`GenApiTree::apply_defaults`] can seed an emulated register bank.
+#[derive(Debug, Clone)]
+enum InitialDefault {
+    Int(NodeId, i64),
+    Float(NodeId, f64),
+    String(NodeId, String),
+    Enum(NodeId, String),
+    FirstEnumEntry(NodeId),
+}
+
 /// The parsed GenICam node tree plus register cache/invalidation state. Transport-agnostic:
 /// every method that touches the wire takes a `&mut impl RegisterAccess`.
 pub struct GenApiTree {
@@ -103,6 +114,7 @@ pub struct GenApiTree {
     /// `pIsLocked` predicates per node, for [`GenApiTree::is_locked`].
     locked: HashMap<NodeId, Vec<NodeId>>,
     names: HashMap<String, NodeId>,
+    defaults: Vec<InitialDefault>,
     cache: Vec<RefCell<Option<CachedValue>>>,
     epoch: Vec<Cell<u64>>,
     global_tick: Cell<u64>,
@@ -688,7 +700,13 @@ impl GenApiTree {
             .collect();
         let mut availability = HashMap::new();
         let mut locked = HashMap::new();
-        for (&idx, &id) in &builder.dom_to_node {
+        let mut first_enum_defaults = Vec::new();
+        let mut reg_defaults = Vec::new();
+        let mut feat_defaults = Vec::new();
+        for idx in 0..dom.elements.len() {
+            let Some(&id) = builder.dom_to_node.get(&idx) else {
+                continue;
+            };
             built_nodes[id.index()] = builder.build_node(idx)?;
             let predicates = builder.availability(idx)?;
             if !predicates.is_empty() {
@@ -698,7 +716,50 @@ impl GenApiTree {
             if !lock.is_empty() {
                 locked.insert(id, lock);
             }
+
+            let tag = dom.get(idx).tag.as_str();
+            let has_pvalue = dom.child(idx, "pValue").is_some();
+            if let Some(v_idx) = dom.child(idx, "Value") {
+                let text = dom.get(v_idx).text.trim();
+                match tag {
+                    "IntReg" | "MaskedIntReg" | "StructEntry" | "Register" => {
+                        if let Ok(v) = parse_int_literal(text) {
+                            reg_defaults.push(InitialDefault::Int(id, v));
+                        }
+                    }
+                    "FloatReg" => {
+                        if let Ok(v) = parse_float_literal(text) {
+                            reg_defaults.push(InitialDefault::Float(id, v));
+                        }
+                    }
+                    "StringReg" => {
+                        reg_defaults.push(InitialDefault::String(id, text.to_string()));
+                    }
+                    "Integer" | "Boolean" if has_pvalue => {
+                        if let Ok(v) = parse_int_literal(text) {
+                            feat_defaults.push(InitialDefault::Int(id, v));
+                        }
+                    }
+                    "Float" if has_pvalue => {
+                        if let Ok(v) = parse_float_literal(text) {
+                            feat_defaults.push(InitialDefault::Float(id, v));
+                        }
+                    }
+                    "String" if has_pvalue => {
+                        feat_defaults.push(InitialDefault::String(id, text.to_string()));
+                    }
+                    "Enumeration" if has_pvalue => {
+                        feat_defaults.push(InitialDefault::Enum(id, text.to_string()));
+                    }
+                    _ => {}
+                }
+            } else if tag == "Enumeration" && has_pvalue {
+                first_enum_defaults.push(InitialDefault::FirstEnumEntry(id));
+            }
         }
+        let mut defaults = first_enum_defaults;
+        defaults.extend(reg_defaults);
+        defaults.extend(feat_defaults);
 
         let n = built_nodes.len();
         Ok(Self {
@@ -707,6 +768,7 @@ impl GenApiTree {
             availability,
             locked,
             names: builder.names,
+            defaults,
             cache: (0..n).map(|_| RefCell::new(None)).collect(),
             epoch: (0..n).map(|_| Cell::new(0)).collect(),
             global_tick: Cell::new(0),
@@ -999,8 +1061,9 @@ impl GenApiTree {
         spec: &RegisterAccessSpec,
         new_bytes: Vec<u8>,
         context_name: &str,
+        force: bool,
     ) -> Result<()> {
-        if !spec.writable || spec.chunk_id.is_some() {
+        if (!spec.writable && !force) || spec.chunk_id.is_some() {
             return Err(GenIcamError::NotWritable(context_name.to_string()));
         }
         let address = self.resolve_address(io, spec, context_name)?;
@@ -1082,9 +1145,10 @@ impl GenApiTree {
         vs: &ValueSource,
         value: Value,
         context_name: &str,
+        force: bool,
     ) -> Result<()> {
         match vs {
-            ValueSource::PValue(target) => self.write_node(io, *target, value, context_name),
+            ValueSource::PValue(target) => self.write_node(io, *target, value, context_name, force),
             _ => Err(GenIcamError::NotWritable(context_name.to_string())),
         }
     }
@@ -1137,15 +1201,18 @@ impl GenApiTree {
         id: NodeId,
         value: Value,
         context_name: &str,
+        force: bool,
     ) -> Result<()> {
         // Clone the small node value up front so the match arms own their data — keeps the
         // recursive calls below straightforward to read, at the cost of a cheap clone.
         let result = match self.nodes[id.index()].clone() {
             Node::Integer(n) | Node::Float(n) => {
-                self.write_value_source(io, &n.value, value, context_name)
+                self.write_value_source(io, &n.value, value, context_name, force)
             }
-            Node::Boolean(n) => self.write_value_source(io, &n.value, value, context_name),
-            Node::Enumeration(e) => self.write_value_source(io, &e.value, value, context_name),
+            Node::Boolean(n) => self.write_value_source(io, &n.value, value, context_name, force),
+            Node::Enumeration(e) => {
+                self.write_value_source(io, &e.value, value, context_name, force)
+            }
             Node::IntReg(spec) => {
                 let current = if spec.bit_mask.is_some() {
                     self.read_register_bytes(io, id, &spec, context_name)?
@@ -1153,7 +1220,7 @@ impl GenApiTree {
                     vec![0u8; spec.length as usize]
                 };
                 let new_bytes = crate::node::encode_int(&current, value.as_i64(), &spec);
-                self.write_register_bytes(io, id, &spec, new_bytes, context_name)
+                self.write_register_bytes(io, id, &spec, new_bytes, context_name, force)
             }
             Node::FloatReg(spec) => {
                 let new_bytes = crate::node::encode_float(
@@ -1161,9 +1228,11 @@ impl GenApiTree {
                     spec.length as usize,
                     spec.endianness,
                 );
-                self.write_register_bytes(io, id, &spec, new_bytes, context_name)
+                self.write_register_bytes(io, id, &spec, new_bytes, context_name, force)
             }
-            Node::Converter(conv) => self.eval_converter_write(io, &conv, value, context_name),
+            Node::Converter(conv) => {
+                self.eval_converter_write(io, &conv, value, context_name, force)
+            }
             Node::SwissKnife(_)
             | Node::EnumEntry(_)
             | Node::Category(_)
@@ -1222,6 +1291,7 @@ impl GenApiTree {
         conv: &ConverterNode,
         value: Value,
         context_name: &str,
+        force: bool,
     ) -> Result<()> {
         let mut vars = HashMap::new();
         for (name, target) in &conv.variables {
@@ -1229,7 +1299,7 @@ impl GenApiTree {
         }
         vars.insert("FROM".to_string(), value);
         let result = conv.formula_to.eval(&vars)?;
-        self.write_node(io, conv.value_link, result, context_name)
+        self.write_node(io, conv.value_link, result, context_name, force)
     }
 
     fn read_string_register(
@@ -1251,7 +1321,19 @@ impl GenApiTree {
 
     pub fn set_integer(&self, io: &mut impl RegisterAccess, name: &str, value: i64) -> Result<()> {
         let id = self.node_id(name)?;
-        self.write_node(io, id, Value::Int(value), name)
+        self.write_node(io, id, Value::Int(value), name, false)
+    }
+
+    /// Like [`GenApiTree::set_integer`], but bypasses `AccessMode=RO` on backing registers so an
+    /// emulator can seed or update read-only registers (e.g. `SensorWidth`, `PayloadSize`).
+    pub fn force_set_integer(
+        &self,
+        io: &mut impl RegisterAccess,
+        name: &str,
+        value: i64,
+    ) -> Result<()> {
+        let id = self.node_id(name)?;
+        self.write_node(io, id, Value::Int(value), name, true)
     }
 
     pub fn get_float(&self, io: &mut impl RegisterAccess, name: &str) -> Result<f64> {
@@ -1261,7 +1343,18 @@ impl GenApiTree {
 
     pub fn set_float(&self, io: &mut impl RegisterAccess, name: &str, value: f64) -> Result<()> {
         let id = self.node_id(name)?;
-        self.write_node(io, id, Value::Float(value), name)
+        self.write_node(io, id, Value::Float(value), name, false)
+    }
+
+    /// Like [`GenApiTree::set_float`], but bypasses `AccessMode=RO` on backing registers.
+    pub fn force_set_float(
+        &self,
+        io: &mut impl RegisterAccess,
+        name: &str,
+        value: f64,
+    ) -> Result<()> {
+        let id = self.node_id(name)?;
+        self.write_node(io, id, Value::Float(value), name, true)
     }
 
     pub fn get_boolean(&self, io: &mut impl RegisterAccess, name: &str) -> Result<bool> {
@@ -1298,6 +1391,7 @@ impl GenApiTree {
         id: NodeId,
         value: &str,
         context_name: &str,
+        force: bool,
     ) -> Result<()> {
         match &self.nodes[id.index()] {
             Node::StringReg(spec) => {
@@ -1305,13 +1399,13 @@ impl GenApiTree {
                 let src = value.as_bytes();
                 let n = src.len().min(bytes.len());
                 bytes[..n].copy_from_slice(&src[..n]);
-                self.write_register_bytes(io, id, spec, bytes, context_name)
+                self.write_register_bytes(io, id, spec, bytes, context_name, force)
             }
             Node::String(StringSource::Literal(_)) => {
                 Err(GenIcamError::NotWritable(context_name.to_string()))
             }
             Node::String(StringSource::PValue(target)) => {
-                self.write_string_node(io, *target, value, context_name)?;
+                self.write_string_node(io, *target, value, context_name, force)?;
                 self.bump_epoch(id);
                 Ok(())
             }
@@ -1330,7 +1424,7 @@ impl GenApiTree {
 
     pub fn set_string(&self, io: &mut impl RegisterAccess, name: &str, value: &str) -> Result<()> {
         let id = self.node_id(name)?;
-        self.write_string_node(io, id, value, name)
+        self.write_string_node(io, id, value, name, false)
     }
 
     pub fn get_enum_symbolic(&self, io: &mut impl RegisterAccess, name: &str) -> Result<String> {
@@ -1363,6 +1457,28 @@ impl GenApiTree {
         entry_name: &str,
     ) -> Result<()> {
         let id = self.node_id(name)?;
+        self.set_enum_symbolic_by_id(io, id, name, entry_name, false)
+    }
+
+    /// Like [`GenApiTree::set_enum_symbolic`], but bypasses `AccessMode=RO` on backing registers.
+    pub fn force_set_enum_symbolic(
+        &self,
+        io: &mut impl RegisterAccess,
+        name: &str,
+        entry_name: &str,
+    ) -> Result<()> {
+        let id = self.node_id(name)?;
+        self.set_enum_symbolic_by_id(io, id, name, entry_name, true)
+    }
+
+    fn set_enum_symbolic_by_id(
+        &self,
+        io: &mut impl RegisterAccess,
+        id: NodeId,
+        name: &str,
+        entry_name: &str,
+        force: bool,
+    ) -> Result<()> {
         let (value_source, entry_value) = {
             let Node::Enumeration(e) = &self.nodes[id.index()] else {
                 return Err(GenIcamError::TypeMismatch {
@@ -1385,7 +1501,12 @@ impl GenApiTree {
             };
             (e.value.clone(), entry.value)
         };
-        self.write_value_source(io, &value_source, Value::Int(entry_value), name)
+        let result =
+            self.write_value_source(io, &value_source, Value::Int(entry_value), name, force);
+        if result.is_ok() {
+            self.bump_epoch(id);
+        }
+        result
     }
 
     pub fn execute_command(&self, io: &mut impl RegisterAccess, name: &str) -> Result<()> {
@@ -1400,11 +1521,151 @@ impl GenApiTree {
                 })
             }
         };
-        self.write_value_source(io, &value_source, Value::Int(command_value), name)?;
+        self.write_value_source(io, &value_source, Value::Int(command_value), name, false)?;
         // Registers name commands as invalidators (`<pInvalidator>UserSetLoad</pInvalidator>` on
         // the live C6-2040-GigE): executing one must invalidate them, not just the register the
         // command itself writes.
         self.bump_epoch(id);
         Ok(())
+    }
+
+    /// Write initial `<Value>` defaults (and first-entry fallbacks for register-backed
+    /// enumerations without a `<Value>`) into `io`. Bypasses `AccessMode=RO` so read-only
+    /// capability registers (`SensorWidth`, `WidthMax`, ...) also receive their `<Value>`.
+    pub fn apply_defaults(&self, io: &mut impl RegisterAccess) {
+        for def in &self.defaults {
+            match def {
+                InitialDefault::Int(id, v) => {
+                    let _ = self.write_node(io, *id, Value::Int(*v), "<default>", true);
+                }
+                InitialDefault::Float(id, v) => {
+                    let _ = self.write_node(io, *id, Value::Float(*v), "<default>", true);
+                }
+                InitialDefault::String(id, s) => {
+                    let _ = self.write_string_node(io, *id, s, "<default>", true);
+                }
+                InitialDefault::Enum(id, text) => {
+                    if self
+                        .set_enum_symbolic_by_id(io, *id, "<default>", text, true)
+                        .is_err()
+                    {
+                        if let Ok(v) = parse_int_literal(text) {
+                            let _ = self.write_node(io, *id, Value::Int(v), "<default>", true);
+                        }
+                    }
+                }
+                InitialDefault::FirstEnumEntry(id) => {
+                    if let Node::Enumeration(e) = &self.nodes[id.index()] {
+                        if let Some((_, first_entry_id)) = e.entries.first() {
+                            if let Node::EnumEntry(entry) = &self.nodes[first_entry_id.index()] {
+                                let vs = e.value.clone();
+                                let val = entry.value;
+                                let _ = self.write_value_source(
+                                    io,
+                                    &vs,
+                                    Value::Int(val),
+                                    "<default>",
+                                    true,
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        self.invalidate_cache();
+    }
+
+    /// All non-chunk register [`NodeId`]s whose bytes can affect `name`'s value, availability,
+    /// lock state, or enum entry availability (including registers reached through formulas,
+    /// `pAddress`/`pIndex`, and `pInvalidator`).
+    pub fn feature_register_nodes(&self, name: &str) -> Result<Vec<NodeId>> {
+        let root = self.node_id(name)?;
+        let mut seen = std::collections::HashSet::new();
+        let mut stack = vec![root];
+        let mut regs = Vec::new();
+        while let Some(cur) = stack.pop() {
+            if !seen.insert(cur) {
+                continue;
+            }
+            match &self.nodes[cur.index()] {
+                Node::IntReg(spec) | Node::FloatReg(spec) | Node::StringReg(spec) => {
+                    if spec.chunk_id.is_none() {
+                        regs.push(cur);
+                    }
+                    stack.extend(spec.invalidators.iter().copied());
+                }
+                Node::Enumeration(e) => {
+                    for (_, entry_id) in &e.entries {
+                        if let Some(preds) = self.availability.get(entry_id) {
+                            stack.extend(preds.iter().copied());
+                        }
+                    }
+                }
+                _ => {}
+            }
+            self.node_references(cur, &mut stack);
+            if let Some(preds) = self.availability.get(&cur) {
+                stack.extend(preds.iter().copied());
+            }
+            if let Some(locks) = self.locked.get(&cur) {
+                stack.extend(locks.iter().copied());
+            }
+        }
+        Ok(regs)
+    }
+
+    /// Resolve a register node's current `(address, length, has_dynamic_address)`. Returns
+    /// `Ok(None)` for non-register or chunk-register nodes.
+    pub fn register_range(
+        &self,
+        io: &mut impl RegisterAccess,
+        id: NodeId,
+    ) -> Result<Option<(u64, u32, bool)>> {
+        match &self.nodes[id.index()] {
+            Node::IntReg(spec) | Node::FloatReg(spec) | Node::StringReg(spec)
+                if spec.chunk_id.is_none() =>
+            {
+                let addr = self.resolve_address(io, spec, "<register>")?;
+                let dynamic = spec
+                    .address_terms
+                    .iter()
+                    .any(|t| !matches!(t, AddressTerm::Literal(_)));
+                Ok(Some((addr, spec.length, dynamic)))
+            }
+            _ => Ok(None),
+        }
+    }
+
+    /// For a `<Command>` node `name`, return `(target_node_id, command_value)` for its `<pValue>`
+    /// target and `<CommandValue>`.
+    pub fn command_spec(&self, name: &str) -> Result<(NodeId, i64)> {
+        let id = self.node_id(name)?;
+        match &self.nodes[id.index()] {
+            Node::Command(c) => match c.value {
+                ValueSource::PValue(target) => Ok((target, c.command_value)),
+                _ => Err(GenIcamError::NotWritable(name.to_string())),
+            },
+            other => Err(GenIcamError::TypeMismatch {
+                name: name.to_string(),
+                expected: "Command",
+                found: other.kind_name(),
+            }),
+        }
+    }
+
+    /// Evaluate `id` as an integer.
+    pub fn eval_node_int(&self, io: &mut impl RegisterAccess, id: NodeId) -> Result<i64> {
+        Ok(self.eval_node(io, id, "<node>")?.as_i64())
+    }
+
+    /// Write `value` to `id`, bypassing `AccessMode=RO`.
+    pub fn force_write_node_int(
+        &self,
+        io: &mut impl RegisterAccess,
+        id: NodeId,
+        value: i64,
+    ) -> Result<()> {
+        self.write_node(io, id, Value::Int(value), "<node>", true)
     }
 }

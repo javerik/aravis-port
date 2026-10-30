@@ -23,6 +23,17 @@ All crates in the workspace share one version.
   `AcquisitionFrameRateEnable` is set. `frame_period` stays the default.
 - Fake camera: `sensor_width`/`sensor_height` (default 4096 × 4096) set what `WidthMax` and
   `HeightMax` report.
+- Fake camera: vendor GenICam XML mode (`FakeCameraConfig::genicam_xml: Option<VendorXml>`,
+  `validate_vendor_xml`, `FakeCamera::resolved_features`). Serves raw `.xml` or `.zip` blobs at a
+  configurable 32-bit address (`DEFAULT_VENDOR_XML_ADDRESS = 0x0100_0000`), backs the 32-bit
+  register space with sparse memory, seeds `<Value>` defaults (`GenApiTree::apply_defaults`), and
+  resolves SFNC features (`Width`, `Height`, `OffsetX`, `OffsetY`, `WidthMax`, `HeightMax`,
+  `SensorWidth`, `SensorHeight`, `PixelFormat`, `PayloadSize`, `AcquisitionStart`/
+  `AcquisitionStop`, `AcquisitionFrameRate(Enable)`, `TLParamsLocked`, `DeviceScanType`,
+  `GevSCPSPacketSize`) through `aravis-port-genicam` on writes touching their backing registers.
+- `aravis-port-core::zip`: single-file `.zip`/DEFLATE helpers (`extract_first_file`, `is_zip`,
+  `store_single_file`, `deflate_single_file`), shared by `aravis-port-device` and
+  `aravis-port-fakecamera`.
 
 ### Changed
 

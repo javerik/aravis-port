@@ -1,8 +1,12 @@
+use std::collections::HashMap;
+
 use aravis_port_core::bootstrap::{control_channel_privilege, offset};
 use aravis_port_core::MacAddress;
 
-/// Size of the flat register bank. Addresses at or beyond this are served from the XML blob
-/// instead (`address - REGISTER_SPACE_SIZE`), mirroring Aravis's "registers then XML" addressing.
+/// Size of the GVBS bootstrap register block (`0x0000..0x1000`). In built-in mode the XML is
+/// served immediately after this block (`0x1000`); in vendor-XML mode the XML is served at a
+/// configurable address (defaulting to `0x0100_0000`) and all other 32-bit addresses outside the
+/// XML slice are backed by sparse memory.
 pub const REGISTER_SPACE_SIZE: usize = 0x1000;
 
 /// Custom feature registers, placed in the unused gap between the standard identity block
@@ -85,10 +89,12 @@ pub(crate) fn default_pixel_format(scan: u32) -> u32 {
     }
 }
 
-/// The fake camera's register bank plus served XML blob, addressed as one flat space.
+/// The fake camera's register bank plus served XML blob, addressed over the 32-bit range.
 pub struct RegisterBank {
     pub registers: Vec<u8>,
     pub xml: Vec<u8>,
+    pub xml_address: u32,
+    sparse: HashMap<u32, u8>,
 }
 
 pub struct Identity {
@@ -101,7 +107,12 @@ pub struct Identity {
 }
 
 impl RegisterBank {
-    pub fn new(identity: &Identity, xml: Vec<u8>) -> Self {
+    fn bootstrap_registers(
+        identity: &Identity,
+        xml_name: &str,
+        xml_address: u32,
+        xml_len: usize,
+    ) -> Vec<u8> {
         let mut registers = vec![0u8; REGISTER_SPACE_SIZE];
 
         write_str(
@@ -151,14 +162,19 @@ impl RegisterBank {
         write_u32(&mut registers, offset::CONTROL_CHANNEL_PRIVILEGE, 0);
         write_u32(&mut registers, offset::STREAM_CHANNEL_0_PACKET_SIZE, 1500);
 
-        // XML URL: "Local:<name>;<hex address>;<hex size>" — address is the absolute (flat)
-        // address where the XML blob starts, i.e. REGISTER_SPACE_SIZE.
-        let url = format!(
-            "Local:genicam.xml;{:x};{:x}",
-            REGISTER_SPACE_SIZE,
-            xml.len()
-        );
+        let url = format!("Local:{xml_name};{xml_address:x};{xml_len:x}");
         write_str(&mut registers, offset::XML_URL_0, offset::XML_URL_LEN, &url);
+        registers
+    }
+
+    pub fn new(identity: &Identity, xml: Vec<u8>) -> Self {
+        let xml_address = REGISTER_SPACE_SIZE as u32;
+        let xml_name = if aravis_port_core::zip::is_zip(&xml) {
+            "genicam.xml.zip"
+        } else {
+            "genicam.xml"
+        };
+        let mut registers = Self::bootstrap_registers(identity, xml_name, xml_address, xml.len());
 
         // Sensible feature defaults, matching the shape of a real camera's power-on state.
         write_u32(&mut registers, feature::WIDTH, 64);
@@ -181,33 +197,76 @@ impl RegisterBank {
         );
         write_u32(&mut registers, feature::SCAN3D_COORDINATE_SELECTOR, 0);
 
-        Self { registers, xml }
+        Self {
+            registers,
+            xml,
+            xml_address,
+            sparse: HashMap::new(),
+        }
     }
 
-    /// Read `len` bytes starting at the flat address, spanning the register/XML boundary if
-    /// needed. Out-of-range bytes (beyond the XML blob) read as zero rather than panicking.
+    /// Construct a register bank for vendor-XML mode: GVBS bootstrap registers in
+    /// `0x0000..0x1000`, the raw (or `.zip`) XML served read-only at `xml_address`, and sparse
+    /// memory over the rest of the 32-bit address space.
+    pub fn new_vendor(
+        identity: &Identity,
+        xml: Vec<u8>,
+        xml_address: u32,
+        xml_file_name: &str,
+    ) -> Self {
+        let registers = Self::bootstrap_registers(identity, xml_file_name, xml_address, xml.len());
+        Self {
+            registers,
+            xml,
+            xml_address,
+            sparse: HashMap::new(),
+        }
+    }
+
+    /// Read `len` bytes starting at `address`. Addresses inside the GVBS bootstrap block come
+    /// from `registers`, addresses in `[xml_address .. xml_address + xml.len())` come from the
+    /// served XML blob, and all other 32-bit addresses read from sparse memory (defaulting to 0).
     pub fn read(&self, address: u32, len: usize) -> Vec<u8> {
         let mut out = Vec::with_capacity(len);
+        let reg_len = self.registers.len() as u64;
+        let xml_start = u64::from(self.xml_address);
+        let xml_end = xml_start + self.xml.len() as u64;
         for i in 0..len {
-            let a = address as usize + i;
-            let byte = if a < self.registers.len() {
-                self.registers[a]
+            let a = u64::from(address) + i as u64;
+            let byte = if a > u64::from(u32::MAX) {
+                0
+            } else if a < reg_len {
+                self.registers[a as usize]
+            } else if a >= xml_start && a < xml_end {
+                self.xml[(a - xml_start) as usize]
             } else {
-                let xml_offset = a - self.registers.len();
-                *self.xml.get(xml_offset).unwrap_or(&0)
+                self.sparse.get(&(a as u32)).copied().unwrap_or(0)
             };
             out.push(byte);
         }
         out
     }
 
-    /// Write `data` at the flat address. Bytes landing in the read-only XML region are silently
-    /// dropped, matching a real device where the XML region isn't writable memory.
+    /// Write `data` at `address`. Bytes landing in the read-only XML region are silently dropped,
+    /// matching a real device where the XML region isn't writable memory.
     pub fn write(&mut self, address: u32, data: &[u8]) {
+        let reg_len = self.registers.len() as u64;
+        let xml_start = u64::from(self.xml_address);
+        let xml_end = xml_start + self.xml.len() as u64;
         for (i, &byte) in data.iter().enumerate() {
-            let a = address as usize + i;
-            if a < self.registers.len() {
-                self.registers[a] = byte;
+            let a = u64::from(address) + i as u64;
+            if a > u64::from(u32::MAX) {
+                continue;
+            }
+            if a >= xml_start && a < xml_end {
+                continue;
+            }
+            if a < reg_len {
+                self.registers[a as usize] = byte;
+            } else if byte == 0 {
+                self.sparse.remove(&(a as u32));
+            } else {
+                self.sparse.insert(a as u32, byte);
             }
         }
     }
@@ -229,6 +288,22 @@ impl RegisterBank {
 
     pub fn has_control_flags(value: u32) -> bool {
         value & (control_channel_privilege::EXCLUSIVE | control_channel_privilege::CONTROL) != 0
+    }
+}
+
+impl aravis_port_genicam::RegisterAccess for RegisterBank {
+    fn read_memory(&mut self, address: u64, len: usize) -> std::io::Result<Vec<u8>> {
+        let Ok(addr) = u32::try_from(address) else {
+            return Ok(vec![0u8; len]);
+        };
+        Ok(self.read(addr, len))
+    }
+
+    fn write_memory(&mut self, address: u64, data: &[u8]) -> std::io::Result<()> {
+        if let Ok(addr) = u32::try_from(address) {
+            self.write(addr, data);
+        }
+        Ok(())
     }
 }
 
@@ -282,6 +357,22 @@ mod tests {
         let mut bank = RegisterBank::new(&test_identity(), vec![1, 2, 3]);
         bank.write(REGISTER_SPACE_SIZE as u32, &[9, 9, 9]);
         assert_eq!(bank.read(REGISTER_SPACE_SIZE as u32, 3), vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn sparse_high_32_bit_addresses_round_trip() {
+        let xml = b"<RegisterDescription/>".to_vec();
+        let mut bank =
+            RegisterBank::new_vendor(&test_identity(), xml.clone(), 0x0200_0000, "vendor.xml");
+        assert_eq!(bank.read(0x0200_0000, xml.len()), xml);
+
+        for addr in [0x0001_0000, 0x1000_0000, 0x8000_0000, 0xffff_fffc] {
+            bank.write_u32(addr, 0xdead_beef);
+            assert_eq!(bank.read_u32(addr), 0xdead_beef);
+            bank.write_u32(addr, 0);
+            assert_eq!(bank.read_u32(addr), 0);
+        }
+        assert!(bank.sparse.is_empty());
     }
 
     #[test]

@@ -100,6 +100,35 @@ pub fn generate(width: u32, height: u32, frame_id: u64, pixel_format: u32) -> Ve
     }
 }
 
+/// Like [`generate`], but resolves the pattern by symbolic PFNC name first (so vendor XMLs that
+/// use standard PFNC codes for `Mono8`/`Mono10`/`Mono12`/`Mono16`/`Coord3D_C16` stream the same
+/// test patterns as the built-in XML).
+pub fn generate_for_format(
+    width: u32,
+    height: u32,
+    frame_id: u64,
+    pixel_format: u32,
+    pixel_format_name: Option<&str>,
+) -> Vec<u8> {
+    match pixel_format_name {
+        Some("Mono8" | "Coord3D_C8" | "BayerGR8" | "BayerRG8" | "BayerGB8" | "BayerBG8") => {
+            generate_mono8(width, height, frame_id)
+        }
+        Some("Mono10" | "BayerGR10" | "BayerRG10" | "BayerGB10" | "BayerBG10") => {
+            generate_mono16(width, height, frame_id, 10)
+        }
+        Some("Mono12" | "BayerGR12" | "BayerRG12" | "BayerGB12" | "BayerBG12") => {
+            generate_mono16(width, height, frame_id, 12)
+        }
+        Some("Mono14") => generate_mono16(width, height, frame_id, 14),
+        Some("Mono16" | "BayerGR16" | "BayerRG16" | "BayerGB16" | "BayerBG16") => {
+            generate_mono16(width, height, frame_id, 16)
+        }
+        Some("Coord3D_C16") => generate_profiles(width, height, frame_id),
+        _ => generate(width, height, frame_id, pixel_format),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

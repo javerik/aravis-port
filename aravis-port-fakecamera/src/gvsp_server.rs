@@ -111,11 +111,23 @@ fn run(
         loop {
             let interval = {
                 let state = shared.lock().unwrap();
-                frame_interval(
-                    &state.bank,
-                    settings.pace_from_frame_rate,
-                    settings.frame_period,
-                )
+                if let Some(vendor) = &state.vendor {
+                    let r = vendor.resolved();
+                    if !settings.pace_from_frame_rate || !r.frame_rate_enable {
+                        settings.frame_period
+                    } else {
+                        Duration::try_from_secs_f64(1.0 / f64::from(r.frame_rate_hz))
+                            .ok()
+                            .filter(|period| !period.is_zero())
+                            .unwrap_or(settings.frame_period)
+                    }
+                } else {
+                    frame_interval(
+                        &state.bank,
+                        settings.pace_from_frame_rate,
+                        settings.frame_period,
+                    )
+                }
             };
             let due = last + interval;
             let now = Instant::now();
@@ -131,31 +143,55 @@ fn run(
             }
         }
 
-        let (dest, request, active, chunk_mode, packet_size, path_mtu) = {
+        let (
+            dest,
+            width,
+            height,
+            offset_x,
+            offset_y,
+            pixel_format,
+            pf_name,
+            active,
+            chunk_mode,
+            packet_size,
+            path_mtu,
+        ) = {
             let state = shared.lock().unwrap();
             let dest_ip = Ipv4Addr::from(state.bank.read_u32(offset::STREAM_CHANNEL_0_IP));
             // Port occupies the low 16 bits — matches `Device::open_stream_channel` and the
             // empirically-confirmed behavior of the live C5-2040-GigE camera.
             let port = (state.bank.read_u32(offset::STREAM_CHANNEL_0_PORT) & 0xffff) as u16;
-            let pixel_format = state.bank.read_u32(feature::PIXEL_FORMAT);
-            let request = FrameRequest {
-                width: state.bank.read_u32(feature::WIDTH),
-                height: state.bank.read_u32(feature::HEIGHT),
-                offset_x: state.bank.read_u32(feature::OFFSET_X),
-                offset_y: state.bank.read_u32(feature::OFFSET_Y),
-                pixel_format,
-                pixel_format_name: pixel_format::name(pixel_format),
-                frame_id,
-                timestamp_ns: 0,
-            };
-            (
-                SocketAddrV4::new(dest_ip, port),
-                request,
-                state.bank.read_u32(feature::ACQUISITION_ACTIVE) != 0,
-                state.bank.read_u32(feature::CHUNK_MODE_ACTIVE) != 0,
-                negotiated_packet_size(&state.bank, settings.packet_size),
-                state.path_mtu,
-            )
+            if let Some(vendor) = &state.vendor {
+                let r = vendor.resolved();
+                (
+                    SocketAddrV4::new(dest_ip, port),
+                    r.width,
+                    r.height,
+                    r.offset_x,
+                    r.offset_y,
+                    r.pixel_format,
+                    Some(r.pixel_format_name.clone()),
+                    r.acquisition_active,
+                    r.chunk_mode_active,
+                    negotiated_packet_size(&state.bank, settings.packet_size),
+                    state.path_mtu,
+                )
+            } else {
+                let pixel_format = state.bank.read_u32(feature::PIXEL_FORMAT);
+                (
+                    SocketAddrV4::new(dest_ip, port),
+                    state.bank.read_u32(feature::WIDTH),
+                    state.bank.read_u32(feature::HEIGHT),
+                    state.bank.read_u32(feature::OFFSET_X),
+                    state.bank.read_u32(feature::OFFSET_Y),
+                    pixel_format,
+                    pixel_format::name(pixel_format).map(str::to_string),
+                    state.bank.read_u32(feature::ACQUISITION_ACTIVE) != 0,
+                    state.bank.read_u32(feature::CHUNK_MODE_ACTIVE) != 0,
+                    negotiated_packet_size(&state.bank, settings.packet_size),
+                    state.path_mtu,
+                )
+            }
         };
 
         // Packets bigger than the path MTU don't arrive, as on a real link.
@@ -164,8 +200,14 @@ fn run(
         }
 
         let request = FrameRequest {
+            width,
+            height,
+            offset_x,
+            offset_y,
+            pixel_format,
+            pixel_format_name: pf_name.as_deref(),
+            frame_id,
             timestamp_ns: now_ns(),
-            ..request
         };
         // A source that panicked leaves the lock poisoned; the camera keeps using it.
         let image = {
