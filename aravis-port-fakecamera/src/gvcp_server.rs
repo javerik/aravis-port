@@ -1,3 +1,4 @@
+use std::collections::VecDeque;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4, UdpSocket};
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread::{self, JoinHandle};
@@ -10,6 +11,7 @@ use aravis_port_core::gvcp::{
     WriteRegisterAck, WriteRegisterCmd, HEADER_LEN,
 };
 
+use crate::gvsp_server::SentFrame;
 use crate::registers::{default_pixel_format, feature, pixel_format_allowed, RegisterBank};
 
 /// GVCP error code returned for writes from a non-controller client. Our own choice — not
@@ -28,6 +30,40 @@ pub(crate) struct SharedState {
     pub path_mtu: u16,
     pub test_packets: bool,
     pub resend_unavailable: bool,
+    /// Answer discovery only from requesters in the camera's subnet under this mask; `None`
+    /// answers everyone.
+    pub discovery_netmask: Option<Ipv4Addr>,
+    /// The address stream, resend and test packets leave from.
+    pub stream_source_ip: Ipv4Addr,
+    /// The last frames sent, newest last, for resends.
+    pub history: VecDeque<Arc<SentFrame>>,
+    pub history_len: usize,
+}
+
+impl SharedState {
+    /// Keep `frame` for resends, dropping the oldest beyond `history_len`.
+    pub fn remember(&mut self, frame: Arc<SentFrame>) {
+        if self.history_len == 0 {
+            return;
+        }
+        while self.history.len() >= self.history_len {
+            self.history.pop_front();
+        }
+        self.history.push_back(frame);
+    }
+}
+
+/// Whether a discovery request from `from` gets an answer from a camera at `own_ip`: always
+/// without a netmask, otherwise only from the same subnet (and never from IPv6).
+fn discovery_reachable(netmask: Option<Ipv4Addr>, own_ip: Ipv4Addr, from: SocketAddr) -> bool {
+    let Some(mask) = netmask else {
+        return true;
+    };
+    let SocketAddr::V4(from) = from else {
+        return false;
+    };
+    let mask = u32::from(mask);
+    u32::from(*from.ip()) & mask == u32::from(own_ip) & mask
 }
 
 pub(crate) fn spawn(
@@ -112,6 +148,10 @@ fn handle_packet(
 
     match header.command {
         Command::DiscoveryCmd => {
+            let own_ip = Ipv4Addr::from(state.bank.read_u32(offset::CURRENT_IP));
+            if !discovery_reachable(state.discovery_netmask, own_ip, from) {
+                return;
+            }
             let ack_bytes = state.bank.discovery_ack_bytes();
             send_ack(socket, from, Command::DiscoveryAck, header.id, &ack_bytes);
         }
@@ -276,7 +316,7 @@ fn after_write(state: &mut SharedState, address: u32, len: usize) {
     let payload: Vec<u8> = (0..(size as usize).saturating_sub(20 + 8))
         .map(|i| i as u8)
         .collect();
-    if let Ok(socket) = UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0)) {
+    if let Ok(socket) = UdpSocket::bind((state.stream_source_ip, 0)) {
         let _ = socket.send_to(&payload, SocketAddrV4::new(dest_ip, port));
     }
 }
@@ -305,33 +345,29 @@ fn handle_resend(state: &SharedState, body: &[u8], extended: bool) {
         return;
     }
 
-    let width = state.bank.read_u32(feature::WIDTH);
-    let height = state.bank.read_u32(feature::HEIGHT);
-    let pixel_format = state.bank.read_u32(feature::PIXEL_FORMAT);
-    let chunk_mode = state.bank.read_u32(feature::CHUNK_MODE_ACTIVE) != 0;
-
     // A fresh, ephemeral socket for the resend: UDP is connectionless and the receiver doesn't
     // validate the sender's source port, so there's no need to share the GVSP sender's socket
     // (and thus no cross-thread synchronization needed for this rare, low-volume path).
-    let Ok(socket) = UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0)) else {
+    let Ok(socket) = UdpSocket::bind((state.stream_source_ip, 0)) else {
         return;
     };
-    if state.resend_unavailable {
-        crate::gvsp_server::send_unavailable(&socket, dest, frame_id, first, last);
-        return;
+    // A frame that already left the history is gone, as from a device's send buffer.
+    let frame = state
+        .history
+        .iter()
+        .rev()
+        .find(|frame| frame.answers_to(frame_id, extended));
+    match frame {
+        Some(frame) if !state.resend_unavailable => crate::gvsp_server::resend_packets(
+            &socket,
+            dest,
+            frame,
+            crate::gvsp_server::negotiated_packet_size(&state.bank, state.packet_size),
+            first,
+            last,
+        ),
+        _ => crate::gvsp_server::send_unavailable(&socket, dest, frame_id, first, last),
     }
-    crate::gvsp_server::resend_packets(
-        &socket,
-        dest,
-        frame_id,
-        width,
-        height,
-        pixel_format,
-        crate::gvsp_server::negotiated_packet_size(&state.bank, state.packet_size),
-        chunk_mode,
-        first,
-        last,
-    );
 }
 
 fn send_ack(socket: &UdpSocket, to: SocketAddr, command: Command, id: u16, payload: &[u8]) {
@@ -419,5 +455,19 @@ mod tests {
         let at = (feature::DEVICE_SCAN_TYPE - start) as usize;
         data[at..at + 4].copy_from_slice(&scan_type::LINESCAN3D.to_be_bytes());
         assert!(!refuses_write(&bank(scan_type::AREASCAN), start, &data));
+    }
+
+    #[test]
+    fn discovery_is_answered_only_within_the_subnet() {
+        let own = Ipv4Addr::new(10, 0, 0, 5);
+        let from = |ip: [u8; 4]| SocketAddr::from((Ipv4Addr::from(ip), 3956));
+        let mask = Some(Ipv4Addr::new(255, 255, 255, 0));
+        assert!(discovery_reachable(mask, own, from([10, 0, 0, 9])));
+        assert!(!discovery_reachable(mask, own, from([192, 168, 1, 10])));
+        assert!(!discovery_reachable(mask, own, from([10, 0, 1, 9])));
+        assert!(discovery_reachable(None, own, from([192, 168, 1, 10])));
+        let v6 = SocketAddr::from((std::net::Ipv6Addr::LOCALHOST, 3956));
+        assert!(!discovery_reachable(mask, own, v6));
+        assert!(discovery_reachable(None, own, v6));
     }
 }

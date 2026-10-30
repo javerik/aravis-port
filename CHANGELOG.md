@@ -7,6 +7,28 @@ All crates in the workspace share one version.
 
 ## [Unreleased]
 
+### Added
+
+- Fake camera as a networked device: `FakeCameraConfig::gvcp_bind` (default `127.0.0.1:0`) or
+  `FakeCamera::start_on` with an already bound socket, and `gvsp_source_ip` (default: the GVCP
+  IP) for stream, resend and test packets. `CurrentIPAddress` and the discovery ack report the
+  bound IP.
+- Fake camera: `discovery_netmask` answers discovery only from requesters in the camera's
+  subnet (default: everyone).
+- Fake camera: a `FrameSource` trait (also implemented for closures) is asked for each frame's
+  payload with the region, pixel format (value and name), frame id and timestamp.
+  `PatternSource`, the built-in patterns, is the default, and `FakeCamera::set_frame_source`
+  swaps the source while streaming.
+- Fake camera: with `pace_from_frame_rate`, frames are paced from `AcquisitionFrameRate` while
+  `AcquisitionFrameRateEnable` is set. `frame_period` stays the default.
+
+### Changed
+
+- Fake camera: resends replay the last `resend_history` (default 16) frames as sent, instead of
+  regenerating the pattern from the current registers. Older frames are answered with "packet
+  unavailable". Frames are due one period after the previous one rather than one period after
+  the previous send finished.
+
 ## [0.2.0] - 2026-10-08
 
 First release of the umbrella crate `aravis-port` and of `aravis-port-device` and

@@ -16,9 +16,11 @@ pub mod feature {
     pub const GAIN_RAW: u32 = 0x110;
     pub const ACQUISITION_ACTIVE: u32 = 0x114;
     pub const CHUNK_MODE_ACTIVE: u32 = 0x118;
-    /// `AcquisitionFrameRateEnable` (0/1). Only stored: the fake's frame period is fixed.
+    /// `AcquisitionFrameRateEnable` (0/1). With `FakeCameraConfig::pace_from_frame_rate`, a set
+    /// enable paces frames from [`FRAME_RATE`]; otherwise it is only stored.
     pub const FRAME_RATE_ENABLE: u32 = 0x11c;
-    /// `AcquisitionFrameRate`, an IEEE-754 `f32` bit pattern. Only stored, like the enable.
+    /// `AcquisitionFrameRate` in Hz, an IEEE-754 `f32` bit pattern. Only used for pacing, like
+    /// the enable.
     pub const FRAME_RATE: u32 = 0x120;
     /// `TriggerSoftware`'s write-only target; holds the last command value written.
     pub const TRIGGER_SOFTWARE: u32 = 0x124;
@@ -43,6 +45,17 @@ pub mod pixel_format {
     pub const MONO16: u32 = 3;
     /// A 16-bit range (z) image, offered only in [`super::scan_type::LINESCAN3D`].
     pub const COORD3D_C16: u32 = 4;
+
+    /// The symbolic name of a `PixelFormat` value, as the built-in XML's enumeration lists it.
+    pub fn name(value: u32) -> Option<&'static str> {
+        match value {
+            MONO8 => Some("Mono8"),
+            MONO10 => Some("Mono10"),
+            MONO16 => Some("Mono16"),
+            COORD3D_C16 => Some("Coord3D_C16"),
+            _ => None,
+        }
+    }
 }
 
 /// `DeviceScanType` register values.
