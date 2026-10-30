@@ -397,3 +397,16 @@ fn without_pacing_the_frame_rate_registers_are_only_stored() {
     let frames = leaders_during(&receiver, Duration::from_millis(500)).len();
     assert!(frames >= 25, "{frames} frames at the 10 ms period");
 }
+
+#[test]
+fn sensor_size_sets_width_max_and_height_max() {
+    let camera = FakeCamera::start(FakeCameraConfig {
+        sensor_width: 1280,
+        sensor_height: 960,
+        ..Default::default()
+    })
+    .unwrap();
+    let cam = Camera::connect_addr(camera.local_addr()).unwrap();
+    assert_eq!(cam.read::<i64>("WidthMax").unwrap(), 1280);
+    assert_eq!(cam.read::<i64>("HeightMax").unwrap(), 960);
+}

@@ -14,7 +14,8 @@
 
 use crate::registers::feature;
 
-pub fn minimal_genicam_xml() -> Vec<u8> {
+/// The served XML, with `WidthMax`/`HeightMax` (the sensor) set to `sensor_width`/`sensor_height`.
+pub fn minimal_genicam_xml(sensor_width: u32, sensor_height: u32) -> Vec<u8> {
     format!(
         r#"<?xml version="1.0" encoding="utf-8"?>
 <RegisterDescription xmlns="http://www.genicam.org/GenApi/Version_1_1" ModelName="FakeCamera" VendorName="aravis-port" SchemaMajorVersion="1" SchemaMinorVersion="1" SchemaSubMinorVersion="0">
@@ -124,11 +125,11 @@ pub fn minimal_genicam_xml() -> Vec<u8> {
 
   <Integer Name="WidthMax">
     <ImposedAccessMode>RO</ImposedAccessMode>
-    <Value>4096</Value>
+    <Value>{sensor_width}</Value>
   </Integer>
   <Integer Name="HeightMax">
     <ImposedAccessMode>RO</ImposedAccessMode>
-    <Value>4096</Value>
+    <Value>{sensor_height}</Value>
   </Integer>
   <IntSwissKnife Name="WidthAvailable">
     <pVariable Name="M">WidthMax</pVariable>
@@ -401,6 +402,8 @@ pub fn minimal_genicam_xml() -> Vec<u8> {
         scan3d_selector_addr = feature::SCAN3D_COORDINATE_SELECTOR,
         chunk_id_frame_id = crate::gvsp_server::CHUNK_ID_FRAME_ID,
         chunk_extra_bytes = crate::gvsp_server::CHUNK_MODE_EXTRA_BYTES,
+        sensor_width = sensor_width,
+        sensor_height = sensor_height,
     )
     .into_bytes()
 }
@@ -411,7 +414,7 @@ mod tests {
 
     #[test]
     fn xml_is_well_formed_enough_to_contain_expected_features() {
-        let xml = String::from_utf8(minimal_genicam_xml()).unwrap();
+        let xml = String::from_utf8(minimal_genicam_xml(4096, 4096)).unwrap();
         for name in [
             "Width",
             "Height",

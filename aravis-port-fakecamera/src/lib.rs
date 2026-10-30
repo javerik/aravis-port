@@ -41,6 +41,10 @@ pub struct FakeCameraConfig {
     pub serial: String,
     pub mac: MacAddress,
     pub heartbeat_timeout: Duration,
+    /// The sensor size, which `WidthMax`/`HeightMax` report and the region (`Width`/`Height`
+    /// plus `OffsetX`/`OffsetY`) must fit into. 4096 × 4096 by default.
+    pub sensor_width: u32,
+    pub sensor_height: u32,
     /// Where GVCP is served: `127.0.0.1:0` (an ephemeral loopback port) by default, or for
     /// example `10.0.0.5:3956` to act as a device on a real interface. The bound IP is what the
     /// bootstrap `CurrentIPAddress` and the discovery ack report. [`FakeCamera::start_on`]
@@ -88,6 +92,8 @@ impl Default for FakeCameraConfig {
             serial: "0001".to_string(),
             mac: MacAddress::new([0x00, 0x11, 0x22, 0x33, 0x44, 0x55]),
             heartbeat_timeout: Duration::from_millis(3000),
+            sensor_width: 4096,
+            sensor_height: 4096,
             gvcp_bind: SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0),
             gvsp_source_ip: None,
             discovery_netmask: None,
@@ -148,7 +154,10 @@ impl FakeCamera {
             mac: cfg.mac,
             current_ip: *local_addr.ip(),
         };
-        let mut bank = RegisterBank::new(&identity, xml::minimal_genicam_xml());
+        let mut bank = RegisterBank::new(
+            &identity,
+            xml::minimal_genicam_xml(cfg.sensor_width, cfg.sensor_height),
+        );
         bank.write_u32(
             aravis_port_core::bootstrap::offset::HEARTBEAT_TIMEOUT,
             cfg.heartbeat_timeout.as_millis() as u32,

@@ -21,6 +21,8 @@ All crates in the workspace share one version.
   swaps the source while streaming.
 - Fake camera: with `pace_from_frame_rate`, frames are paced from `AcquisitionFrameRate` while
   `AcquisitionFrameRateEnable` is set. `frame_period` stays the default.
+- Fake camera: `sensor_width`/`sensor_height` (default 4096 × 4096) set what `WidthMax` and
+  `HeightMax` report.
 
 ### Changed
 
