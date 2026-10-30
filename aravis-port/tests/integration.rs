@@ -169,29 +169,27 @@ fn linescan3d_switches_pixel_format_to_coord3d_c16() {
         .is_err());
 }
 
-/// `Scan3dCoordinateScale`/`Offset` report the fixed calibration of the coordinate the selector
-/// picks, as an SFNC 3D camera does.
+/// `Scan3dCoordinateScale`/`Offset` report the calibration of the coordinate the selector
+/// picks, as an SFNC 3D camera does: the power-on one, then what the camera's owner sets.
 #[test]
 fn scan3d_coordinates_follow_their_selector() {
     let camera = fake_camera(FakeCameraConfig::default());
     let cam = Camera::connect_addr(camera.local_addr()).unwrap();
+    let read = |coordinate: &str| {
+        cam.write::<String>("Scan3dCoordinateSelector", coordinate.to_string())
+            .unwrap();
+        // The registers hold f32s.
+        (
+            cam.read::<f64>("Scan3dCoordinateScale").unwrap() as f32,
+            cam.read::<f64>("Scan3dCoordinateOffset").unwrap() as f32,
+        )
+    };
     for (coordinate, scale) in [
         ("CoordinateA", 0.05),
         ("CoordinateB", 0.1),
         ("CoordinateC", 0.001),
     ] {
-        cam.write::<String>("Scan3dCoordinateSelector", coordinate.to_string())
-            .unwrap();
-        assert_eq!(
-            cam.read::<f64>("Scan3dCoordinateScale").unwrap(),
-            scale,
-            "{coordinate}"
-        );
-        assert_eq!(
-            cam.read::<f64>("Scan3dCoordinateOffset").unwrap(),
-            0.0,
-            "{coordinate}"
-        );
+        assert_eq!(read(coordinate), (scale, 0.0), "{coordinate}");
     }
     assert_eq!(
         cam.feature_info("Scan3dCoordinateScale")
@@ -200,6 +198,15 @@ fn scan3d_coordinates_follow_their_selector() {
             .as_deref(),
         Some("mm")
     );
+
+    let calibration = [(0.2, -5.0), (0.5, 12.5), (0.0004, -0.0004)];
+    camera.set_scan3d_calibration(calibration).unwrap();
+    for (coordinate, expected) in ["CoordinateA", "CoordinateB", "CoordinateC"]
+        .into_iter()
+        .zip(calibration)
+    {
+        assert_eq!(read(coordinate), expected, "{coordinate}");
+    }
 }
 
 /// A Linescan3D frame is two bytes per value, and its profiles carry the laser shadow's zeros

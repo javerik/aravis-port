@@ -37,10 +37,20 @@ pub mod feature {
     /// `DeviceScanType`: [`super::scan_type`]. Switching it moves `PixelFormat` onto a format
     /// the new mode offers, the way a 3D profiler such as the AT C6 does.
     pub const DEVICE_SCAN_TYPE: u32 = 0x134;
-    /// `Scan3dCoordinateSelector` (0/1/2 = CoordinateA/B/C). Only stored; it selects which
-    /// constant `Scan3dCoordinateScale`/`Scan3dCoordinateOffset` report.
+    /// `Scan3dCoordinateSelector` (0/1/2 = CoordinateA/B/C). It selects which of the
+    /// registers below `Scan3dCoordinateScale`/`Scan3dCoordinateOffset` report.
     pub const SCAN3D_COORDINATE_SELECTOR: u32 = 0x138;
+    /// `Scan3dCoordinateScale` of CoordinateA/B/C: three IEEE-754 `f32` bit patterns, 4 bytes
+    /// apart. Read-only over GVCP; the device's calibration, set with
+    /// `FakeCamera::set_scan3d_calibration`.
+    pub const SCAN3D_COORDINATE_SCALE: u32 = 0x13c;
+    /// `Scan3dCoordinateOffset` of CoordinateA/B/C, laid out like [`SCAN3D_COORDINATE_SCALE`].
+    pub const SCAN3D_COORDINATE_OFFSET: u32 = 0x148;
 }
+
+/// The power-on `Scan3dCoordinateScale` of CoordinateA/B/C in mm: what the fake has always
+/// reported. The offsets are 0.
+pub const SCAN3D_DEFAULT_SCALES: [f32; 3] = [0.05, 0.1, 0.001];
 
 /// PixelFormat register values understood by the built-in fake-camera GenICam XML.
 pub mod pixel_format {
@@ -196,6 +206,15 @@ impl RegisterBank {
             scan_type::AREASCAN,
         );
         write_u32(&mut registers, feature::SCAN3D_COORDINATE_SELECTOR, 0);
+        for (i, scale) in SCAN3D_DEFAULT_SCALES.iter().enumerate() {
+            let at = 4 * i as u32;
+            write_u32(
+                &mut registers,
+                feature::SCAN3D_COORDINATE_SCALE + at,
+                scale.to_bits(),
+            );
+            write_u32(&mut registers, feature::SCAN3D_COORDINATE_OFFSET + at, 0);
+        }
 
         Self {
             registers,

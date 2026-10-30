@@ -31,7 +31,7 @@ use source::SharedSource;
 use vendor_xml::{VendorDefaults, VendorModel};
 
 pub use gvsp_server::{CHUNK_ID_FRAME_ID, CHUNK_ID_IMAGE, CHUNK_MODE_EXTRA_BYTES};
-pub use registers::{feature, pixel_format, scan_type, REGISTER_SPACE_SIZE};
+pub use registers::{feature, pixel_format, scan_type, REGISTER_SPACE_SIZE, SCAN3D_DEFAULT_SCALES};
 pub use source::{FrameRequest, FrameSource, PatternSource};
 pub use vendor_xml::{
     bytes_per_pixel_for, validate_vendor_xml, ResolvedFeatures, VendorXml,
@@ -356,6 +356,26 @@ impl FakeCamera {
             gvcp_server::after_write(state, feature::DEVICE_SCAN_TYPE, 4);
             Ok(())
         }
+    }
+
+    /// Set the calibration the built-in XML's `Scan3dCoordinateScale`/`Scan3dCoordinateOffset`
+    /// report, as `(scale, offset)` in mm for CoordinateA, B and C. A vendor XML describes its
+    /// own Scan3d features, so this fails in vendor-XML mode.
+    pub fn set_scan3d_calibration(&self, coordinates: [(f32, f32); 3]) -> Result<(), String> {
+        let mut state = self.shared.lock().unwrap();
+        if state.vendor.is_some() {
+            return Err("a vendor XML's Scan3d features are its own".into());
+        }
+        for (i, (scale, offset)) in coordinates.into_iter().enumerate() {
+            let at = 4 * i as u32;
+            state
+                .bank
+                .write_u32(feature::SCAN3D_COORDINATE_SCALE + at, scale.to_bits());
+            state
+                .bank
+                .write_u32(feature::SCAN3D_COORDINATE_OFFSET + at, offset.to_bits());
+        }
+        Ok(())
     }
 
     /// Program `AcquisitionFrameRateEnable` and `AcquisitionFrameRate` in either built-in or

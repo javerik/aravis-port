@@ -9,8 +9,9 @@
 //! (`GevSCPSPacketSize` and its flag bits) map the standard bootstrap register, as camera XMLs do.
 //! `DeviceScanType` switches between area scan and a C6-like `Linescan3D`, whose only
 //! `PixelFormat` is `Coord3D_C16`. The entries say so through `pIsAvailable`, and the device
-//! refuses the others (see `gvcp_server`). The `Scan3dCoordinate*` features report a fixed
-//! calibration per coordinate.
+//! refuses the others (see `gvcp_server`). The `Scan3dCoordinate*` features report a
+//! calibration per coordinate, from registers the owner of the camera sets (power-on: A 0.05,
+//! B 0.1, C 0.001 mm, offsets 0).
 
 use crate::registers::feature;
 
@@ -231,18 +232,64 @@ pub fn minimal_genicam_xml(sensor_width: u32, sensor_height: u32) -> Vec<u8> {
     <EnumEntry Name="CoordinateC"><Value>2</Value></EnumEntry>
     <pValue>Scan3dCoordinateSelectorReg</pValue>
   </Enumeration>
+  <FloatReg Name="Scan3dCoordinateScaleAReg">
+    <Address>0x{scan3d_scale_a_addr:x}</Address>
+    <Length>4</Length>
+    <AccessMode>RO</AccessMode>
+    <Endianess>BigEndian</Endianess>
+  </FloatReg>
+  <FloatReg Name="Scan3dCoordinateScaleBReg">
+    <Address>0x{scan3d_scale_b_addr:x}</Address>
+    <Length>4</Length>
+    <AccessMode>RO</AccessMode>
+    <Endianess>BigEndian</Endianess>
+  </FloatReg>
+  <FloatReg Name="Scan3dCoordinateScaleCReg">
+    <Address>0x{scan3d_scale_c_addr:x}</Address>
+    <Length>4</Length>
+    <AccessMode>RO</AccessMode>
+    <Endianess>BigEndian</Endianess>
+  </FloatReg>
   <SwissKnife Name="Scan3dCoordinateScaleValue">
     <pVariable Name="S">Scan3dCoordinateSelectorReg</pVariable>
-    <Formula>S = 0 ? 0.05 : (S = 1 ? 0.1 : 0.001)</Formula>
+    <pVariable Name="A">Scan3dCoordinateScaleAReg</pVariable>
+    <pVariable Name="B">Scan3dCoordinateScaleBReg</pVariable>
+    <pVariable Name="C">Scan3dCoordinateScaleCReg</pVariable>
+    <Formula>S = 0 ? A : (S = 1 ? B : C)</Formula>
   </SwissKnife>
   <Float Name="Scan3dCoordinateScale">
     <ImposedAccessMode>RO</ImposedAccessMode>
     <pValue>Scan3dCoordinateScaleValue</pValue>
     <Unit>mm</Unit>
   </Float>
+  <FloatReg Name="Scan3dCoordinateOffsetAReg">
+    <Address>0x{scan3d_offset_a_addr:x}</Address>
+    <Length>4</Length>
+    <AccessMode>RO</AccessMode>
+    <Endianess>BigEndian</Endianess>
+  </FloatReg>
+  <FloatReg Name="Scan3dCoordinateOffsetBReg">
+    <Address>0x{scan3d_offset_b_addr:x}</Address>
+    <Length>4</Length>
+    <AccessMode>RO</AccessMode>
+    <Endianess>BigEndian</Endianess>
+  </FloatReg>
+  <FloatReg Name="Scan3dCoordinateOffsetCReg">
+    <Address>0x{scan3d_offset_c_addr:x}</Address>
+    <Length>4</Length>
+    <AccessMode>RO</AccessMode>
+    <Endianess>BigEndian</Endianess>
+  </FloatReg>
+  <SwissKnife Name="Scan3dCoordinateOffsetValue">
+    <pVariable Name="S">Scan3dCoordinateSelectorReg</pVariable>
+    <pVariable Name="A">Scan3dCoordinateOffsetAReg</pVariable>
+    <pVariable Name="B">Scan3dCoordinateOffsetBReg</pVariable>
+    <pVariable Name="C">Scan3dCoordinateOffsetCReg</pVariable>
+    <Formula>S = 0 ? A : (S = 1 ? B : C)</Formula>
+  </SwissKnife>
   <Float Name="Scan3dCoordinateOffset">
     <ImposedAccessMode>RO</ImposedAccessMode>
-    <Value>0</Value>
+    <pValue>Scan3dCoordinateOffsetValue</pValue>
     <Unit>mm</Unit>
   </Float>
 
@@ -400,6 +447,12 @@ pub fn minimal_genicam_xml(sensor_width: u32, sensor_height: u32) -> Vec<u8> {
         offset_y_addr = feature::OFFSET_Y,
         scan_type_addr = feature::DEVICE_SCAN_TYPE,
         scan3d_selector_addr = feature::SCAN3D_COORDINATE_SELECTOR,
+        scan3d_scale_a_addr = feature::SCAN3D_COORDINATE_SCALE,
+        scan3d_scale_b_addr = feature::SCAN3D_COORDINATE_SCALE + 4,
+        scan3d_scale_c_addr = feature::SCAN3D_COORDINATE_SCALE + 8,
+        scan3d_offset_a_addr = feature::SCAN3D_COORDINATE_OFFSET,
+        scan3d_offset_b_addr = feature::SCAN3D_COORDINATE_OFFSET + 4,
+        scan3d_offset_c_addr = feature::SCAN3D_COORDINATE_OFFSET + 8,
         chunk_id_frame_id = crate::gvsp_server::CHUNK_ID_FRAME_ID,
         chunk_extra_bytes = crate::gvsp_server::CHUNK_MODE_EXTRA_BYTES,
         sensor_width = sensor_width,

@@ -31,6 +31,10 @@ All crates in the workspace share one version.
   `SensorWidth`, `SensorHeight`, `PixelFormat`, `PayloadSize`, `AcquisitionStart`/
   `AcquisitionStop`, `AcquisitionFrameRate(Enable)`, `TLParamsLocked`, `DeviceScanType`,
   `GevSCPSPacketSize`) through `aravis-port-genicam` on writes touching their backing registers.
+- Fake camera: `Scan3dCoordinateScale`/`Scan3dCoordinateOffset` of CoordinateA/B/C are backed
+  by registers (`feature::SCAN3D_COORDINATE_SCALE`/`_OFFSET`), and
+  `FakeCamera::set_scan3d_calibration` sets them. The power-on values are the former fixed ones
+  (`SCAN3D_DEFAULT_SCALES`: A 0.05, B 0.1, C 0.001 mm, offsets 0), now as `f32`.
 - `aravis-port-core::zip`: single-file `.zip`/DEFLATE helpers (`extract_first_file`, `is_zip`,
   `store_single_file`, `deflate_single_file`), shared by `aravis-port-device` and
   `aravis-port-fakecamera`.
