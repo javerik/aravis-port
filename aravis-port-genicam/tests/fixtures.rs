@@ -833,3 +833,22 @@ fn apply_defaults_seeds_registers_including_read_only_and_enums() {
         Some((0x20, 4, false))
     );
 }
+
+#[test]
+fn parse_errors_say_where_they_are() {
+    // A node that refers to a feature nobody defines: the error points at that node.
+    let xml = "<RegisterDescription>\n  <Integer Name=\"Width\"><Value>64</Value></Integer>\n  \
+               <Integer Name=\"Height\"><pValue>Missing</pValue></Integer>\n</RegisterDescription>";
+    let err = GenApiTree::parse_located(xml).err().unwrap();
+    assert!(matches!(err.error, GenIcamError::DanglingReference(ref n) if n == "Missing"));
+    assert_eq!(err.line_column(xml), Some((3, 3)));
+
+    // A syntax error: the mismatched end tag.
+    let xml = "<RegisterDescription>\n\n  <Integer Name=\"W\"></Float>\n</RegisterDescription>";
+    let err = GenApiTree::parse_located(xml).err().unwrap();
+    assert!(matches!(err.error, GenIcamError::Xml(_)));
+    assert_eq!(err.line_column(xml).map(|(line, _)| line), Some(3));
+
+    // `parse` keeps returning the bare error.
+    assert!(matches!(GenApiTree::parse(xml), Err(GenIcamError::Xml(_))));
+}

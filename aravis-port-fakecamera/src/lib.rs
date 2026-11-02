@@ -34,7 +34,8 @@ pub use gvsp_server::{CHUNK_ID_FRAME_ID, CHUNK_ID_IMAGE, CHUNK_MODE_EXTRA_BYTES}
 pub use registers::{feature, pixel_format, scan_type, REGISTER_SPACE_SIZE, SCAN3D_DEFAULT_SCALES};
 pub use source::{FrameRequest, FrameSource, PatternSource};
 pub use vendor_xml::{
-    bytes_per_pixel_for, validate_vendor_xml, ResolvedFeatures, VendorXml,
+    bytes_per_pixel_for, followed_optional_features, required_feature_problems,
+    validate_vendor_xml, RequiredFeatureProblem, ResolvedFeatures, VendorXml,
     DEFAULT_VENDOR_XML_ADDRESS,
 };
 

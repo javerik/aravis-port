@@ -632,9 +632,52 @@ impl<'a> Builder<'a> {
     }
 }
 
+/// A [`GenApiTree::parse_located`] error: what went wrong, and where.
+#[derive(Debug)]
+pub struct LocatedError {
+    pub error: GenIcamError,
+    /// Byte offset in the document: where an XML syntax error was found, or the start tag of the
+    /// node that could not be built. `None` when the error has no place (an empty document).
+    pub offset: Option<usize>,
+}
+
+impl LocatedError {
+    /// The 1-based line and column (in characters) of [`Self::offset`] in `xml`.
+    pub fn line_column(&self, xml: &str) -> Option<(usize, usize)> {
+        let offset = self.offset?.min(xml.len());
+        let mut start = offset;
+        while !xml.is_char_boundary(start) {
+            start -= 1;
+        }
+        let before = &xml[..start];
+        let line = before.matches('\n').count() + 1;
+        let line_start = before.rfind('\n').map_or(0, |i| i + 1);
+        Some((line, before[line_start..].chars().count() + 1))
+    }
+}
+
+impl std::fmt::Display for LocatedError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.error.fmt(f)
+    }
+}
+
+impl std::error::Error for LocatedError {}
+
 impl GenApiTree {
     pub fn parse(xml: &str) -> Result<Self> {
-        let dom = dom::parse(xml)?;
+        Self::parse_located(xml).map_err(|e| e.error)
+    }
+
+    /// [`Self::parse`], with the place in the document where it failed, for editors and
+    /// validators that point at the line.
+    pub fn parse_located(xml: &str) -> std::result::Result<Self, LocatedError> {
+        let dom =
+            dom::parse_located(xml).map_err(|(error, offset)| LocatedError { error, offset })?;
+        let at = |idx: usize| {
+            let offset = Some(dom.get(idx).offset);
+            move |error| LocatedError { error, offset }
+        };
 
         // Pass 1: reserve a NodeId (with a placeholder value) for every constructible element,
         // so forward references (pFeature/pValue/pAddress/pVariable) resolve regardless of
@@ -653,9 +696,11 @@ impl GenApiTree {
                         .strip_prefix("0x")
                         .or_else(|| text.strip_prefix("0X"))
                         .unwrap_or(text);
-                    let id = u32::from_str_radix(hex, 16).map_err(|_| {
-                        GenIcamError::Xml(format!("invalid ChunkID '{text}' on port '{name}'"))
-                    })?;
+                    let id = u32::from_str_radix(hex, 16)
+                        .map_err(|_| {
+                            GenIcamError::Xml(format!("invalid ChunkID '{text}' on port '{name}'"))
+                        })
+                        .map_err(at(c))?;
                     chunk_ports.insert(name.clone(), id);
                 }
             }
@@ -707,8 +752,8 @@ impl GenApiTree {
             let Some(&id) = builder.dom_to_node.get(&idx) else {
                 continue;
             };
-            built_nodes[id.index()] = builder.build_node(idx)?;
-            let predicates = builder.availability(idx)?;
+            built_nodes[id.index()] = builder.build_node(idx).map_err(at(idx))?;
+            let predicates = builder.availability(idx).map_err(at(idx))?;
             if !predicates.is_empty() {
                 availability.insert(id, predicates);
             }

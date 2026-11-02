@@ -214,45 +214,108 @@ pub fn validate_vendor_xml(vendor: &VendorXml) -> io::Result<GenApiTree> {
 }
 
 fn validate_required_features(tree: &GenApiTree) -> Result<(), String> {
+    match required_feature_problems(tree).into_iter().next() {
+        Some(problem) => Err(problem.message),
+        None => Ok(()),
+    }
+}
+
+/// A required SFNC feature that a vendor XML lacks or defines with the wrong type.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RequiredFeatureProblem {
+    /// The feature's name (`Width`, `Height`, `PixelFormat` or `AcquisitionStart`).
+    pub feature: &'static str,
+    /// Whether the feature is defined at all (so an editor can point at its node).
+    pub defined: bool,
+    pub message: String,
+}
+
+/// Every problem with the SFNC features a vendor XML must define for [`crate::FakeCamera`] to
+/// serve it: numeric `Width`/`Height`, an Enumeration `PixelFormat` and a writable Command
+/// `AcquisitionStart`. Empty when the XML is usable. [`validate_vendor_xml`] fails on the first.
+pub fn required_feature_problems(tree: &GenApiTree) -> Vec<RequiredFeatureProblem> {
+    let mut problems = Vec::new();
+    let mut problem = |feature: &'static str, defined: bool, message: String| {
+        problems.push(RequiredFeatureProblem {
+            feature,
+            defined,
+            message,
+        })
+    };
+    let missing =
+        |feature: &str| format!("GenICam XML is missing required SFNC feature '{feature}'");
+
     for numeric in ["Width", "Height"] {
-        let id = tree
-            .node_id(numeric)
-            .map_err(|_| format!("GenICam XML is missing required SFNC feature '{numeric}'"))?;
+        let Ok(id) = tree.node_id(numeric) else {
+            problem(numeric, false, missing(numeric));
+            continue;
+        };
         let kind = tree.node_kind(id);
         if !matches!(
             kind,
             "Integer" | "IntReg" | "SwissKnife" | "Converter" | "Float" | "FloatReg"
         ) {
-            return Err(format!(
-                "GenICam XML feature '{numeric}' must be numeric, found {kind}"
-            ));
+            problem(
+                numeric,
+                true,
+                format!("GenICam XML feature '{numeric}' must be numeric, found {kind}"),
+            );
         }
     }
 
-    let pf_id = tree
-        .node_id("PixelFormat")
-        .map_err(|_| "GenICam XML is missing required SFNC feature 'PixelFormat'".to_string())?;
-    let pf_kind = tree.node_kind(pf_id);
-    if pf_kind != "Enumeration" {
-        return Err(format!(
-            "GenICam XML feature 'PixelFormat' must be Enumeration, found {pf_kind}"
-        ));
+    match tree.node_id("PixelFormat") {
+        Err(_) => problem("PixelFormat", false, missing("PixelFormat")),
+        Ok(id) => {
+            let kind = tree.node_kind(id);
+            if kind != "Enumeration" {
+                problem(
+                    "PixelFormat",
+                    true,
+                    format!("GenICam XML feature 'PixelFormat' must be Enumeration, found {kind}"),
+                );
+            }
+        }
     }
 
-    let acq_id = tree.node_id("AcquisitionStart").map_err(|_| {
-        "GenICam XML is missing required SFNC feature 'AcquisitionStart'".to_string()
-    })?;
-    let acq_kind = tree.node_kind(acq_id);
-    if acq_kind != "Command" {
-        return Err(format!(
-            "GenICam XML feature 'AcquisitionStart' must be Command, found {acq_kind}"
-        ));
+    match tree.node_id("AcquisitionStart") {
+        Err(_) => problem("AcquisitionStart", false, missing("AcquisitionStart")),
+        Ok(id) => {
+            let kind = tree.node_kind(id);
+            if kind != "Command" {
+                problem(
+                    "AcquisitionStart",
+                    true,
+                    format!("GenICam XML feature 'AcquisitionStart' must be Command, found {kind}"),
+                );
+            } else if let Err(e) = tree.command_spec("AcquisitionStart") {
+                problem(
+                    "AcquisitionStart",
+                    true,
+                    format!("GenICam XML feature 'AcquisitionStart' has no writable target: {e}"),
+                );
+            }
+        }
     }
-    tree.command_spec("AcquisitionStart").map_err(|e| {
-        format!("GenICam XML feature 'AcquisitionStart' has no writable target: {e}")
-    })?;
 
-    Ok(())
+    problems
+}
+
+/// The optional SFNC features the fake camera follows when a vendor XML defines them
+/// (`OffsetX`, `PayloadSize`, `AcquisitionStop`, ...), one entry per feature with its aliases
+/// (`["ExposureTime", "ExposureTimeAbs"]`), in a fixed order.
+pub fn followed_optional_features() -> Vec<Vec<&'static str>> {
+    const REQUIRED: u32 = SLOT_WIDTH | SLOT_HEIGHT | SLOT_PIXEL_FORMAT | SLOT_ACQ_START;
+    let mut features: Vec<(u32, Vec<&'static str>)> = Vec::new();
+    for &(name, slot) in WATCHED_FEATURES {
+        if slot & REQUIRED != 0 {
+            continue;
+        }
+        match features.iter_mut().find(|(s, _)| *s == slot) {
+            Some((_, names)) => names.push(name),
+            None => features.push((slot, vec![name])),
+        }
+    }
+    features.into_iter().map(|(_, names)| names).collect()
 }
 
 const SLOT_WIDTH: u32 = 1 << 0;
@@ -924,5 +987,51 @@ impl VendorModel {
         self.resolved.acquisition_active = false;
         let _ = self.tree.force_set_integer(bank, "TLParamsLocked", 0);
         self.resolved.tl_params_locked = false;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn required_feature_problems_lists_every_missing_or_mistyped_feature() {
+        let tree = GenApiTree::parse(
+            r#"<RegisterDescription>
+                <Integer Name="Width"><Value>64</Value></Integer>
+                <Boolean Name="Height"><Value>1</Value></Boolean>
+            </RegisterDescription>"#,
+        )
+        .unwrap();
+        let problems = required_feature_problems(&tree);
+        let summary: Vec<_> = problems.iter().map(|p| (p.feature, p.defined)).collect();
+        assert_eq!(
+            summary,
+            [
+                ("Height", true),
+                ("PixelFormat", false),
+                ("AcquisitionStart", false)
+            ]
+        );
+        assert!(problems[0].message.contains("must be numeric"));
+        assert_eq!(
+            validate_required_features(&tree).unwrap_err(),
+            problems[0].message
+        );
+    }
+
+    #[test]
+    fn the_built_in_xml_has_no_problems() {
+        let xml = crate::xml::minimal_genicam_xml(640, 480);
+        let tree = GenApiTree::parse(std::str::from_utf8(&xml).unwrap()).unwrap();
+        assert!(required_feature_problems(&tree).is_empty());
+    }
+
+    #[test]
+    fn optional_features_group_aliases_and_leave_out_required_ones() {
+        let features = followed_optional_features();
+        assert!(features.contains(&vec!["ExposureTime", "ExposureTimeAbs"]));
+        assert!(features.contains(&vec!["OffsetX"]));
+        assert!(!features.iter().flatten().any(|f| *f == "Width"));
     }
 }

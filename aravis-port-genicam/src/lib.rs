@@ -12,4 +12,4 @@ pub use access::{ChunkDataAccess, MemoryRegisterAccess, RegisterAccess};
 pub use error::{GenIcamError, Result};
 pub use formula::Value;
 pub use node::NodeId;
-pub use tree::{EnumEntryState, FeatureInfo, GenApiTree, RegisterDescription};
+pub use tree::{EnumEntryState, FeatureInfo, GenApiTree, LocatedError, RegisterDescription};

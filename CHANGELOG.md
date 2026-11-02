@@ -38,8 +38,16 @@ All crates in the workspace share one version.
 - `aravis-port-core::zip`: single-file `.zip`/DEFLATE helpers (`extract_first_file`, `is_zip`,
   `store_single_file`, `deflate_single_file`), shared by `aravis-port-device` and
   `aravis-port-fakecamera`.
+- `GenApiTree::parse_located` returns a `LocatedError` with the byte offset of an XML syntax
+  error or of the node that could not be built, and `LocatedError::line_column`. The DOM records
+  each element's offset (`XmlElement::offset`).
+- Fake camera: `required_feature_problems` lists every required SFNC feature a vendor XML lacks
+  or mistypes (`validate_vendor_xml` still fails on the first), and `followed_optional_features`
+  the optional ones the fake camera follows.
 
 ### Changed
+
+- GenICam parsing rejects a document with an unclosed element instead of accepting it.
 
 - Fake camera: resends replay the last `resend_history` (default 16) frames as sent, instead of
   regenerating the pattern from the current registers. Older frames are answered with "packet

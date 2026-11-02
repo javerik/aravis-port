@@ -13,6 +13,8 @@ pub struct XmlElement {
     pub attrs: HashMap<String, String>,
     pub children: Vec<usize>,
     pub text: String,
+    /// Byte offset of the element's `<` in the document.
+    pub offset: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -45,6 +47,19 @@ impl XmlDom {
 }
 
 pub fn parse(xml: &str) -> Result<XmlDom, GenIcamError> {
+    parse_located(xml).map_err(|(e, _)| e)
+}
+
+/// [`parse`], with the byte offset where an error was found.
+pub fn parse_located(xml: &str) -> Result<XmlDom, (GenIcamError, Option<usize>)> {
+    // With `trim_text` the position before an event can still be on the whitespace in front of
+    // the tag, so element offsets are moved forward to their `<`.
+    let tag_start = |pos: u64| {
+        let pos = pos as usize;
+        xml.get(pos..)
+            .and_then(|rest| rest.find('<'))
+            .map_or(pos, |i| pos + i)
+    };
     let mut reader = Reader::from_str(xml);
     reader.config_mut().trim_text(true);
 
@@ -69,6 +84,7 @@ pub fn parse(xml: &str) -> Result<XmlDom, GenIcamError> {
     }
 
     loop {
+        let before = reader.buffer_position();
         match reader.read_event_into(&mut buf) {
             Ok(Event::Start(e)) => {
                 let tag = String::from_utf8_lossy(e.name().as_ref()).into_owned();
@@ -79,6 +95,7 @@ pub fn parse(xml: &str) -> Result<XmlDom, GenIcamError> {
                     attrs,
                     children: Vec::new(),
                     text: String::new(),
+                    offset: tag_start(before),
                 });
                 if let Some(&parent) = stack.last() {
                     elements[parent].children.push(idx);
@@ -94,6 +111,7 @@ pub fn parse(xml: &str) -> Result<XmlDom, GenIcamError> {
                     attrs,
                     children: Vec::new(),
                     text: String::new(),
+                    offset: tag_start(before),
                 });
                 if let Some(&parent) = stack.last() {
                     elements[parent].children.push(idx);
@@ -109,14 +127,26 @@ pub fn parse(xml: &str) -> Result<XmlDom, GenIcamError> {
                 }
             }
             Ok(Event::Eof) => break,
-            Err(e) => return Err(GenIcamError::Xml(e.to_string())),
+            Err(e) => {
+                return Err((
+                    GenIcamError::Xml(e.to_string()),
+                    Some(reader.error_position() as usize),
+                ))
+            }
             _ => {}
         }
         buf.clear();
     }
 
+    if let Some(&open) = stack.last() {
+        let el = &elements[open];
+        return Err((
+            GenIcamError::Xml(format!("element <{}> is not closed", el.tag)),
+            Some(el.offset),
+        ));
+    }
     if elements.is_empty() {
-        return Err(GenIcamError::Xml("empty document".to_string()));
+        return Err((GenIcamError::Xml("empty document".to_string()), None));
     }
     Ok(XmlDom { elements, root: 0 })
 }
@@ -147,9 +177,30 @@ mod tests {
 
     #[test]
     fn malformed_xml_is_an_error_not_a_panic() {
-        assert!(
-            parse("<Root><Unclosed></Root>").is_err() || parse("<Root><Unclosed></Root>").is_ok()
-        );
+        assert!(parse("<Root><Unclosed></Root>").is_err());
         assert!(parse("not xml at all <<<").is_err());
+    }
+
+    #[test]
+    fn elements_record_the_offset_of_their_tag() {
+        let xml = "<Root>\n  <A/>\n  <B>x</B>\n</Root>";
+        let dom = parse(xml).unwrap();
+        let a = dom.child(dom.root, "A").unwrap();
+        let b = dom.child(dom.root, "B").unwrap();
+        assert_eq!(dom.get(dom.root).offset, 0);
+        assert_eq!(&xml[dom.get(a).offset..][..4], "<A/>");
+        assert_eq!(&xml[dom.get(b).offset..][..3], "<B>");
+    }
+
+    #[test]
+    fn errors_carry_the_offset_where_they_were_found() {
+        let xml = "<Root>\n  <A></B>\n</Root>";
+        let (_, at) = parse_located(xml).unwrap_err();
+        assert_eq!(at, Some(xml.find("</B>").unwrap()));
+
+        let xml = "<Root>\n  <Open>\n";
+        let (e, at) = parse_located(xml).unwrap_err();
+        assert!(e.to_string().contains("<Open>"), "{e}");
+        assert_eq!(at, Some(xml.find("<Open>").unwrap()));
     }
 }
