@@ -38,6 +38,7 @@ pub use vendor_xml::{
     validate_vendor_xml, RequiredFeatureProblem, ResolvedFeatures, VendorXml,
     DEFAULT_VENDOR_XML_ADDRESS,
 };
+pub use xml::minimal_genicam_xml;
 
 /// Configuration for a simulated camera.
 #[derive(Debug, Clone)]

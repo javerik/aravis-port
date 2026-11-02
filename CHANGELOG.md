@@ -43,7 +43,7 @@ All crates in the workspace share one version.
   each element's offset (`XmlElement::offset`).
 - Fake camera: `required_feature_problems` lists every required SFNC feature a vendor XML lacks
   or mistypes (`validate_vendor_xml` still fails on the first), and `followed_optional_features`
-  the optional ones the fake camera follows.
+  the optional ones the fake camera follows. `minimal_genicam_xml` (the built-in XML) is public.
 
 ### Changed
 
