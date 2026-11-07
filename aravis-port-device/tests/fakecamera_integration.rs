@@ -76,6 +76,26 @@ fn heartbeat_thread_detects_out_of_band_control_loss() {
 }
 
 #[test]
+fn an_unresponsive_camera_times_out_and_its_heartbeat_reports_control_lost() {
+    let camera = FakeCamera::start(FakeCameraConfig::default()).unwrap();
+    let device = Device::connect(camera.local_addr(), fast_device_config()).unwrap();
+    assert!(device.has_control());
+
+    camera.set_unresponsive(true);
+    // The heartbeat's read times out after its retries (3 × 200 ms), and only then says so.
+    std::thread::sleep(Duration::from_millis(1000));
+    assert!(!device.has_control());
+    assert!(matches!(
+        device.read_register(feature::WIDTH),
+        Err(Error::Timeout { .. })
+    ));
+
+    // Back on the network, it answers again with its state kept.
+    camera.set_unresponsive(false);
+    assert_eq!(device.read_register(feature::WIDTH).unwrap(), 64);
+}
+
+#[test]
 fn genicam_feature_read_write_and_enum_and_command_through_the_full_stack() {
     let camera = FakeCamera::start(FakeCameraConfig::default()).unwrap();
     let device = Device::connect(camera.local_addr(), fast_device_config()).unwrap();

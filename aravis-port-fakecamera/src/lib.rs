@@ -235,6 +235,7 @@ impl FakeCamera {
             stream_source_ip,
             history: VecDeque::new(),
             history_len: cfg.resend_history,
+            unresponsive: false,
         }));
         let source: SharedSource = Arc::new(Mutex::new(Box::new(PatternSource)));
 
@@ -404,6 +405,15 @@ impl FakeCamera {
         } else {
             state.bank.write_u32(feature::ACQUISITION_ACTIVE, 0);
         }
+    }
+
+    /// Make the camera drop off the network (`true`) or come back (`false`), as a pulled cable or
+    /// a power cut would: while unresponsive every GVCP request, discovery included, goes
+    /// unanswered and no stream packet is sent. Its state is kept, so it comes back as it was,
+    /// except that a controller whose heartbeats went unanswered past the heartbeat timeout has
+    /// lost its privilege by then.
+    pub fn set_unresponsive(&self, unresponsive: bool) {
+        self.shared.lock().unwrap().unresponsive = unresponsive;
     }
 
     /// The address of the client currently holding control-channel privilege, if any.

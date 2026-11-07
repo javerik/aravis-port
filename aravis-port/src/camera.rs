@@ -82,7 +82,14 @@ impl Camera {
     /// (3956, see [`Camera::connect`]); this exists for non-standard setups (e.g. a simulated
     /// device bound to an ephemeral port in tests).
     pub fn connect_addr(addr: SocketAddrV4) -> Result<Self> {
-        let device = Device::connect(addr, DeviceConfig::default())?;
+        Self::connect_addr_with_config(addr, DeviceConfig::default())
+    }
+
+    /// [`Camera::connect_addr`] with explicit GVCP retry/timeout and heartbeat settings. The
+    /// heartbeat decides [`Camera::has_control`], so these also set how soon a camera that
+    /// stopped answering is reported as lost: one heartbeat period plus the retries of one read.
+    pub fn connect_addr_with_config(addr: SocketAddrV4, cfg: DeviceConfig) -> Result<Self> {
+        let device = Device::connect(addr, cfg)?;
         Ok(Self {
             device,
             ip: *addr.ip(),

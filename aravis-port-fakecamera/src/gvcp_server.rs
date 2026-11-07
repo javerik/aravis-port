@@ -42,6 +42,9 @@ pub(crate) struct SharedState {
     /// The last frames sent, newest last, for resends.
     pub history: VecDeque<Arc<SentFrame>>,
     pub history_len: usize,
+    /// Set by [`crate::FakeCamera::set_unresponsive`]: the camera is gone from the network, so
+    /// GVCP requests (discovery included) go unanswered and no GVSP packet is sent.
+    pub unresponsive: bool,
 }
 
 impl SharedState {
@@ -95,6 +98,9 @@ fn run(
             return;
         }
         match socket.recv_from(&mut buf) {
+            // A camera that dropped off the network: the request is lost, as it would be on the
+            // wire. Heartbeats are lost too, so its own heartbeat timeout expires meanwhile.
+            Ok(_) if shared.lock().unwrap().unresponsive => continue,
             Ok((n, from)) => handle_packet(&socket, &shared, &buf[..n], from, heartbeat_timeout),
             Err(e)
                 if e.kind() == std::io::ErrorKind::WouldBlock

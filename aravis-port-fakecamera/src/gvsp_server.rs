@@ -143,6 +143,11 @@ fn run(
             }
         }
 
+        // Off the network: the frame is due but never leaves.
+        if shared.lock().unwrap().unresponsive {
+            continue;
+        }
+
         let (
             dest,
             width,

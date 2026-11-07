@@ -9,6 +9,10 @@ All crates in the workspace share one version.
 
 ### Added
 
+- Fake camera: `FakeCamera::set_unresponsive` takes the camera off the network and back: GVCP
+  requests (discovery included) go unanswered and no stream packet is sent meanwhile.
+- `Camera::connect_addr_with_config` connects with explicit GVCP retry/timeout and heartbeat
+  settings (`DeviceConfig`), which also set how soon `has_control` reports a silent camera.
 - Fake camera as a networked device: `FakeCameraConfig::gvcp_bind` (default `127.0.0.1:0`) or
   `FakeCamera::start_on` with an already bound socket, and `gvsp_source_ip` (default: the GVCP
   IP) for stream, resend and test packets. `CurrentIPAddress` and the discovery ack report the
